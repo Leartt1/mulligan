@@ -46,6 +46,28 @@ func TestLiteralEncodesValuesForMySQL(t *testing.T) {
 
 		{"datetime", time.Date(2026, 7, 27, 13, 45, 5, 0, time.UTC), "'2026-07-27 13:45:05'"},
 		{"datetime keeps microseconds", time.Date(2026, 7, 27, 13, 45, 5, 123456000, time.UTC), "'2026-07-27 13:45:05.123456'"},
+
+		// A TIMESTAMP column decodes into the reading machine's own zone, because
+		// the log stores it as an instant. Rendering that instant's local wall
+		// clock would write back a time shifted by whatever offset the machine
+		// running Mulligan happens to have.
+		{
+			"timestamp in another zone renders as the same instant in UTC",
+			time.Date(2026, 7, 27, 15, 45, 5, 0, time.FixedZone("CEST", 2*60*60)),
+			"'2026-07-27 13:45:05'",
+		},
+		{
+			"timestamp west of UTC renders as the same instant",
+			time.Date(2026, 7, 27, 8, 45, 5, 0, time.FixedZone("EST", -5*60*60)),
+			"'2026-07-27 13:45:05'",
+		},
+
+		// Text whose bytes are not valid UTF-8 came out of a column in some other
+		// charset. Quoting it would hand the applying session bytes it will read
+		// as its own charset and silently convert.
+		{"latin1 text falls back to hex", "h\xe9llo", "X'68E96C6C6F'"},
+		{"lone continuation byte falls back to hex", "a\x80b", "X'618062'"},
+		{"valid multi-byte utf8 stays readable", "héllo → 🌍", "'héllo → 🌍'"},
 	}
 
 	for _, tt := range tests {

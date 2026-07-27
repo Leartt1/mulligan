@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/learttytyri/mulligan/internal/change"
 )
@@ -76,7 +77,7 @@ func quoteString(s string) string {
 }
 
 // safeToQuote reports whether s can be rendered as a quoted string that means
-// the same thing under every sql_mode.
+// the same thing under every sql_mode and every connection charset.
 //
 // Doubling a single quote is standard SQL and always safe. A backslash is not:
 // MySQL treats it as an escape by default but as a literal character under
@@ -84,6 +85,13 @@ func quoteString(s string) string {
 // differently depending on server configuration. Control characters are
 // excluded for the same reason — and because a raw newline inside generated SQL
 // makes the output unreadable for the human who has to review it.
+//
+// Bytes that do not form valid UTF-8 came out of a column in some other
+// charset. Quoted, they would reach the applying session as text it reads in
+// its own charset and silently converts, storing something other than what was
+// logged. As hex they are written back byte for byte whatever the session is
+// set to. Valid UTF-8 stays quoted so the script remains readable, which is
+// what the accompanying SET NAMES in the generated header is for.
 func safeToQuote(s string) bool {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
@@ -91,7 +99,7 @@ func safeToQuote(s string) bool {
 			return false
 		}
 	}
-	return true
+	return utf8.ValidString(s)
 }
 
 // hexLiteral renders bytes as X'...', which every sql_mode reads identically.
@@ -101,7 +109,15 @@ func hexLiteral(b []byte) string {
 
 // quoteTime renders a timestamp in MySQL's DATETIME syntax, keeping fractional
 // seconds only when the value carries them.
+//
+// The value is normalized to UTC first. A DATETIME arrives already carrying no
+// zone, so this changes nothing for it; a TIMESTAMP arrives as an instant in
+// whatever zone the machine reading the log happens to sit in, and rendering
+// that machine's wall clock would write back a time shifted by its offset. The
+// generated script pins the session zone to match.
 func quoteTime(t time.Time) string {
+	t = t.UTC()
+
 	layout := "2006-01-02 15:04:05"
 	if t.Nanosecond() != 0 {
 		layout = "2006-01-02 15:04:05.000000"
