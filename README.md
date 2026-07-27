@@ -51,12 +51,20 @@ $ mulligan generate -binlog /var/lib/mysql/binlog.000004 -tables shop.orders
 -- 2 statements, newest change first
 -- REVIEW BEFORE RUNNING — nothing here has been executed.
 
--- undo UPDATE shop.orders — binlog.000004:576 at 2026-07-27 12:30:14 UTC
+SET time_zone = '+00:00';
+SET NAMES utf8mb4;
+
+-- undo UPDATE shop.orders — binlog.000004:546 at 2026-07-27 13:15:57 UTC
 UPDATE `shop`.`orders` SET `status` = 'packed' WHERE `id` = 2 LIMIT 1;
 
--- undo UPDATE shop.orders — binlog.000004:576 at 2026-07-27 12:30:14 UTC
+-- undo UPDATE shop.orders — binlog.000004:546 at 2026-07-27 13:15:57 UTC
 UPDATE `shop`.`orders` SET `status` = 'pending' WHERE `id` = 1 LIMIT 1;
 ```
+
+The script pins the session zone and charset because that is the footing the
+values were written on: timestamps are rendered in UTC, and text in utf8mb4.
+Run it in a session set otherwise and MySQL will shift or convert values without
+complaining.
 
 Both rows share a log position because one `UPDATE` statement produced them —
 that's a single event in the log, and a third row was left alone because it
@@ -69,13 +77,29 @@ opposite order.
 
 Nothing is executed. Mulligan proposes; you review, then you run it.
 
+### Generated columns
+
+If your table has a generated column, name it:
+
+```console
+$ mulligan generate -binlog binlog.000004 -generated invoices.tax,invoices.gross
+```
+
+MySQL writes a generated column's computed value into the log like any other
+column, but records nothing to say it is computed — and assigning to one is an
+error. Without this flag the script fails on `ERROR 3105`. Named columns are read
+but never assigned; restoring the columns they derive from is what brings them
+back.
+
 ## What it will and won't do
 
 - Reverses `INSERT`, `UPDATE` and `DELETE` on the tables you select, restoring
   only the columns a statement actually changed.
 - Refuses rather than guesses: a partial row image, a log without column names,
-  or a value it cannot render exactly all stop the whole script. A half-correct
-  revert is worse than none.
+  a partial JSON update, or a value it cannot render exactly all stop the whole
+  script. A half-correct revert is worse than none. (Partial JSON updates come
+  from `binlog_row_value_options=PARTIAL_JSON`, which logs a diff rather than the
+  document; set it empty to make those tables revertable.)
 - Does **not** undo `DROP` or `ALTER` — schema changes aren't in the row log.
 - Does **not** resolve conflicts. If something else touched the row after the
   statement you're undoing, a reversal will clobber it. Conflict warnings land

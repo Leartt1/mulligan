@@ -132,6 +132,17 @@ database you *already run*. That's Mulligan.
 - **Retention.** Can only reach back as far as binlogs are kept (`expire_logs_days`).
 - **DDL.** Schema changes aren't reversible from ROW events — out of scope, flag clearly.
 - **Non-determinism.** Auto-increment, `NOW()`, sequences won't restore identically.
+- **Generated columns.** Logged with their computed values but not flagged as
+  computed, and assigning to one is an error. v0.1 takes their names via
+  `-generated` and never assigns to them. *(Found the hard way: every table with
+  one produced a script the server rejected outright.)*
+- **Partial JSON.** With `binlog_row_value_options=PARTIAL_JSON` an update logs a
+  diff rather than the document. Reversed as if it were a value it would write the
+  diff into the column — valid JSON, wrong content. v0.1 refuses these events.
+- **Session footing.** Values are logged on the source session's terms. TIMESTAMP
+  decodes to an instant and DATETIME does not, and text is in the column's
+  charset — so the generated script pins `time_zone` and `NAMES`, and any value
+  that is not valid UTF-8 is emitted as a hex literal rather than quoted.
 - **Permissions.** Needs `REPLICATION SLAVE` + `REPLICATION CLIENT` (live) or read
   access to binlog files.
 - **Performance.** Large binlogs — stream, don't load whole; index into the store.
@@ -167,12 +178,22 @@ Toward **v0.2 (live tailing)**:
 
 Known gaps in v0.1, worth closing whenever they get in the way:
 
-- JSON, SET/ENUM and spatial columns are untested against a real server; only the
-  types the acceptance schema exercises are proven.
-- MariaDB is unverified — it spells `binlog_row_metadata` differently, so file mode
-  likely refuses its logs today.
-- A table with no primary key falls back to matching the full row image, which is
-  correct but slow on a large table and matches only one duplicate at a time.
+- **Generated columns must be named by hand** (`-generated`). The table map's
+  optional metadata has no flag for them, so the log genuinely cannot tell us.
+  A v0.2 replica connection could read `information_schema` once and mark them
+  automatically — the natural place to fix this.
+- **Spatial and vector columns are untested.** Everything else in a real table is
+  covered end-to-end by `internal/acceptance`: unsigned 64-bit, negative ints,
+  DECIMAL, DOUBLE, BIT, ENUM, SET, DATE/TIME/DATETIME/TIMESTAMP with fractional
+  seconds, YEAR, JSON, TEXT, BLOB, NULL, utf8mb4, embedded quotes and backslashes.
+- **TEXT columns render as hex** because they arrive as `[]byte`, which is
+  indistinguishable from BLOB at that layer. Correct, but harder to review than it
+  needs to be; the column charset in the table map could tell them apart.
+- **MariaDB is unverified** — it spells `binlog_row_metadata` differently, so file
+  mode likely refuses its logs today.
+- **A table with no primary key** falls back to matching the full row image, which
+  is correct but slow on a large table and matches one duplicate at a time.
+- **One file per run.** A window spanning rotated logs needs a run per file.
 
 ---
 
