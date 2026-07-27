@@ -90,3 +90,42 @@ func TestLiteralRejectsUnknownType(t *testing.T) {
 		t.Fatalf("literal() = %q, want error for unsupported type", got)
 	}
 }
+
+// change.Raw is the one value that reaches the script without quoting, so it is
+// the one place where a source adapter could put attacker-controlled text
+// straight into a statement an operator runs. Only numeric text is allowed
+// through — today that is DECIMAL, and anything else has to be a deliberate
+// change here rather than an accident in an adapter.
+func TestLiteralRejectsRawThatIsNotANumber(t *testing.T) {
+	hostile := []string{
+		"1; DROP TABLE orders",
+		"1 OR 1=1",
+		"(SELECT 1)",
+		"NULL",
+		"",
+		"1'",
+		"0x41",
+		"1--",
+		"1 ",
+	}
+
+	for _, in := range hostile {
+		t.Run(in, func(t *testing.T) {
+			if got, err := literal(change.Raw(in)); err == nil {
+				t.Errorf("literal(change.Raw(%q)) = %s, want error", in, got)
+			}
+		})
+	}
+}
+
+func TestLiteralAcceptsNumericRaw(t *testing.T) {
+	fine := []string{"0", "-1", "1234.5678", "10.00", "-0.001", "1e10", "1.5E-3", "+7"}
+
+	for _, in := range fine {
+		t.Run(in, func(t *testing.T) {
+			if _, err := literal(change.Raw(in)); err != nil {
+				t.Errorf("literal(change.Raw(%q)) returned error: %v", in, err)
+			}
+		})
+	}
+}
