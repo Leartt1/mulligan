@@ -34,8 +34,15 @@ func TestLiteralEncodesValuesForMySQL(t *testing.T) {
 		{"newline falls back to hex", "a\nb", "X'610A62'"},
 		{"NUL byte falls back to hex", "a\x00b", "X'610062'"},
 
+		// TEXT and BLOB are the same type in the log, told apart only by charset,
+		// so both arrive as bytes. Bytes that read as text are quoted like text:
+		// under the script's SET NAMES utf8mb4 the literal stores exactly those
+		// bytes in either kind of column, and a reviewer can read it.
+		{"text column renders readably", []byte("plain text"), "'plain text'"},
+		{"text with a quote is doubled", []byte("it's"), "'it''s'"},
 		{"binary column is hex", []byte{0xde, 0xad, 0xbe, 0xef}, "X'DEADBEEF'"},
-		{"empty binary column", []byte{}, "X''"},
+		{"text with a newline falls back to hex", []byte("a\nb"), "X'610A62'"},
+		{"empty value", []byte{}, "''"},
 
 		// A DECIMAL amount is carried as pre-rendered text and emitted as-is;
 		// quoting it would compare a string against a numeric column, and

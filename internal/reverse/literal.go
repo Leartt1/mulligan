@@ -63,8 +63,14 @@ func literal(v any) (string, error) {
 
 	case string:
 		return quoteString(x), nil
+
+	// TEXT and BLOB are one type in the log, distinguishable only by the column
+	// charset, so both arrive as bytes. Bytes that read as text are quoted like
+	// text: under the SET NAMES the script emits, such a literal stores exactly
+	// those bytes in either kind of column, and the reviewer can read what the
+	// statement is about to write. Anything else still falls back to hex.
 	case []byte:
-		return hexLiteral(x), nil
+		return quoteString(string(x)), nil
 
 	case time.Time:
 		return quoteTime(x), nil
