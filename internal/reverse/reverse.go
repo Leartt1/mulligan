@@ -43,6 +43,11 @@ func deleteRow(ev change.Event) (string, error) {
 func updateRow(ev change.Event) (string, error) {
 	var sets []string
 	for i, c := range ev.Columns {
+		// A column the database computes rejects any assignment, and restoring
+		// what it derives from brings it back on its own.
+		if c.ReadOnly {
+			continue
+		}
 		if equalValue(ev.Before[i], ev.After[i]) {
 			continue
 		}
@@ -74,15 +79,23 @@ func equalValue(a, b any) bool {
 
 // insertRow undoes a DELETE by re-inserting the row image it removed.
 func insertRow(ev change.Event) (string, error) {
-	names := make([]string, len(ev.Columns))
-	vals := make([]string, len(ev.Columns))
+	names := make([]string, 0, len(ev.Columns))
+	vals := make([]string, 0, len(ev.Columns))
 	for i, c := range ev.Columns {
-		names[i] = quoteIdent(c.Name)
+		// Naming a generated column in the column list is rejected outright; the
+		// database fills it in from the rest.
+		if c.ReadOnly {
+			continue
+		}
 		lit, err := literal(ev.Before[i])
 		if err != nil {
 			return "", err
 		}
-		vals[i] = lit
+		names = append(names, quoteIdent(c.Name))
+		vals = append(vals, lit)
+	}
+	if len(names) == 0 {
+		return "", fmt.Errorf("reverse: every column of %s is read-only, leaving nothing to insert", qualify(ev.Schema, ev.Table))
 	}
 	return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s);",
 		qualify(ev.Schema, ev.Table),

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/learttytyri/mulligan/internal/binlog"
+	"github.com/learttytyri/mulligan/internal/change"
 	"github.com/learttytyri/mulligan/internal/reverse"
 )
 
@@ -61,6 +62,10 @@ Generate flags:
   -to TIME        latest change to include, inclusive
   -out FILE       write the script here instead of stdout
   -force          overwrite the -out file if it already exists
+  -generated LIST generated columns, as "column" or "table.column". The log
+                  records their values but not the fact that they are computed,
+                  and assigning to one is an error, so they must be named here.
+                  Symptom of a missing name: ERROR 3105 when the script is run.
 
 Times accept "2006-01-02 15:04:05" (local) or "2006-01-02T15:04:05Z07:00".
 
@@ -80,6 +85,7 @@ func generate(args []string, stdout, stderr io.Writer) int {
 		to         = fs.String("to", "", "latest change to include, inclusive")
 		outPath    = fs.String("out", "", "write the script here instead of stdout")
 		force      = fs.Bool("force", false, "overwrite the -out file if it already exists")
+		generated  = fs.String("generated", "", "comma-separated generated columns, which are read but never assigned")
 	)
 
 	if err := fs.Parse(args); err != nil {
@@ -111,6 +117,8 @@ func generate(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "mulligan generate: %v\n", err)
 		return exitFailure
 	}
+
+	change.MarkReadOnly(events, splitList(*generated))
 
 	plan, err := reverse.Plan(events)
 	if err != nil {
@@ -144,7 +152,7 @@ func generate(args []string, stdout, stderr io.Writer) int {
 }
 
 func buildFilter(tables, from, to string) (binlog.Filter, error) {
-	f := binlog.Filter{Tables: splitTables(tables)}
+	f := binlog.Filter{Tables: splitList(tables)}
 
 	var err error
 	if from != "" {
@@ -167,7 +175,9 @@ func buildFilter(tables, from, to string) (binlog.Filter, error) {
 	return f, nil
 }
 
-func splitTables(list string) []string {
+// splitList reads a comma-separated flag value, dropping blanks so that a
+// trailing comma or an empty value means "none given" rather than one empty name.
+func splitList(list string) []string {
 	var out []string
 	for _, name := range strings.Split(list, ",") {
 		if name = strings.TrimSpace(name); name != "" {

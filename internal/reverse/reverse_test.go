@@ -107,6 +107,85 @@ func TestStatementRevertsUpdateThatChangedThePrimaryKey(t *testing.T) {
 	}
 }
 
+// A generated column is logged like any other, but the database computes it and
+// rejects any attempt to assign one. Restoring the columns it derives from is
+// what brings it back.
+func TestStatementDoesNotAssignToAReadOnlyColumnOnUpdate(t *testing.T) {
+	ev := change.Event{
+		Schema: "shop",
+		Table:  "invoices",
+		Op:     change.Update,
+		Columns: []change.Column{
+			{Name: "id", PrimaryKey: true},
+			{Name: "net"},
+			{Name: "tax", ReadOnly: true},
+		},
+		Before: []any{int64(1), int64(100), int64(20)},
+		After:  []any{int64(1), int64(999), int64(199)},
+	}
+
+	got, err := Statement(ev)
+	if err != nil {
+		t.Fatalf("Statement returned error: %v", err)
+	}
+
+	want := "UPDATE `shop`.`invoices` SET `net` = 100 WHERE `id` = 1 LIMIT 1;"
+	if got != want {
+		t.Errorf("Statement() =\n  %s\nwant\n  %s", got, want)
+	}
+}
+
+// The same applies to re-inserting a deleted row: naming a generated column in
+// the column list is rejected outright.
+func TestStatementOmitsReadOnlyColumnsFromInsert(t *testing.T) {
+	ev := change.Event{
+		Schema: "shop",
+		Table:  "invoices",
+		Op:     change.Delete,
+		Columns: []change.Column{
+			{Name: "id", PrimaryKey: true},
+			{Name: "net"},
+			{Name: "tax", ReadOnly: true},
+		},
+		Before: []any{int64(1), int64(100), int64(20)},
+	}
+
+	got, err := Statement(ev)
+	if err != nil {
+		t.Fatalf("Statement returned error: %v", err)
+	}
+
+	want := "INSERT INTO `shop`.`invoices` (`id`, `net`) VALUES (1, 100);"
+	if got != want {
+		t.Errorf("Statement() =\n  %s\nwant\n  %s", got, want)
+	}
+}
+
+// Reading a generated column is fine — only assigning is refused — so it still
+// helps identify a row in a table that has no primary key.
+func TestStatementStillMatchesOnReadOnlyColumnsInWhere(t *testing.T) {
+	ev := change.Event{
+		Schema: "shop",
+		Table:  "invoices",
+		Op:     change.Insert,
+		Columns: []change.Column{
+			{Name: "net"},
+			{Name: "tax", ReadOnly: true},
+		},
+		After: []any{int64(100), int64(20)},
+	}
+
+	got, err := Statement(ev)
+	if err != nil {
+		t.Fatalf("Statement returned error: %v", err)
+	}
+
+	want := "DELETE FROM `shop`.`invoices` WHERE `net` = 100 AND `tax` = 20 LIMIT 1;"
+	if got != want {
+		t.Errorf("Statement() =\n  %s\nwant\n  %s", got, want)
+	}
+}
+
 // Without a primary key there is no short way to name the row, so the full row
 // image becomes the predicate. LIMIT 1 keeps a reversal from removing every
 // duplicate of an identical row.

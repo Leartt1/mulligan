@@ -47,6 +47,14 @@ func (o Op) String() string {
 type Column struct {
 	Name       string
 	PrimaryKey bool
+
+	// ReadOnly marks a column the database computes for itself — a generated
+	// column, most commonly. Its value appears in the log like any other, but
+	// assigning to it is an error, and it does not need restoring: recomputing
+	// follows from restoring the columns it derives from.
+	//
+	// The binary log carries no flag for this, so it has to be supplied.
+	ReadOnly bool
 }
 
 // Event is a single row modification, normalized across source databases.
