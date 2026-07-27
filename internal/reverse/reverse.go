@@ -10,6 +10,9 @@ import (
 
 // Statement returns the SQL that undoes ev.
 func Statement(ev change.Event) (string, error) {
+	if err := validate(ev); err != nil {
+		return "", err
+	}
 	switch ev.Op {
 	case change.Insert:
 		return deleteRow(ev)
@@ -100,10 +103,6 @@ func whereClause(cols []change.Column, row []any) (string, error) {
 			idx[i] = i
 		}
 	}
-	if len(idx) == 0 {
-		return "", fmt.Errorf("reverse: event carries no columns")
-	}
-
 	preds := make([]string, len(idx))
 	for n, i := range idx {
 		name := quoteIdent(cols[i].Name)
