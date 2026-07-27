@@ -18,7 +18,7 @@ recovery script parsed out of the binlog by an expert. Mulligan turns that into:
 open the console → find the statement → preview what it changed → generate the
 reverse → review → apply.
 
-It's the *bounded* version of database undo: recent, row-logged changes you
+It's the _bounded_ version of database undo: recent, row-logged changes you
 review before anything runs. Not a magic "undo anything forever" (that's a myth —
 see the plan for why); a focused tool for the accident you actually have.
 
@@ -29,7 +29,7 @@ see the plan for why); a focused tool for the accident you actually have.
 - **Oracle Flashback / Snowflake Time Travel** — proprietary and locked in.
 - **Backups / PITR** — whole-database, downtime, loses the good writes.
 
-Mulligan works with the database you *already have*, and it's open source.
+Mulligan works with the database you _already have_, and it's open source.
 
 ## Roadmap
 
