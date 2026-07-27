@@ -87,10 +87,11 @@ database you *already run*. That's Mulligan.
 
 ## 4. Roadmap (phased, each phase shippable)
 
-- **v0.1 — Engine + CLI.** Read a MySQL binlog file for a time/table range, parse
-  ROW events, emit reverse SQL for `INSERT`/`UPDATE`/`DELETE`.
+- **v0.1 — Engine + CLI. ✅ done.** Read a MySQL binlog file for a time/table range,
+  parse ROW events, emit reverse SQL for `INSERT`/`UPDATE`/`DELETE`.
   *Accept:* given a known bad `UPDATE` on a test DB, the generated SQL restores the
-  prior state exactly.
+  prior state exactly. — met by `internal/acceptance`, which runs a real MySQL in a
+  container and applies the generated script.
 - **v0.2 — Live tailing.** Connect as a replica, stream events into the rolling
   window store, query by time/table/user.
 - **v0.3 — API + Web console.** Timeline UI, diff preview, generate revert,
@@ -118,6 +119,14 @@ database you *already run*. That's Mulligan.
 - **Before-image requirement.** Reversing `UPDATE`/`DELETE` needs the full prior
   row. MySQL must run `binlog_format = ROW` **and** `binlog_row_image = FULL`.
   Detect this on connect and refuse loudly if not set — otherwise reversals are wrong.
+  *(v0.1: implemented — a partial row image is refused by name.)*
+- **Column names are not in the log by default.** ROW events identify columns by
+  ordinal, not name. `binlog_row_metadata = FULL` (MySQL 8.0.1+) puts names and
+  the primary key into the table map event, which is what lets Mulligan reverse a
+  binlog *file* without also connecting to the source database. Without it the
+  alternative is querying `information_schema` — which is wrong anyway if the
+  schema changed since the event. v0.1 requires the setting and refuses without
+  it. Revisit for MariaDB, which spells this differently.
 - **Concurrency.** If a later statement also touched the row, a naive undo clobbers
   it. v1 detects and *warns*; it does not auto-merge.
 - **Retention.** Can only reach back as far as binlogs are kept (`expire_logs_days`).
@@ -139,14 +148,31 @@ database you *already run*. That's Mulligan.
 
 ---
 
-## 8. First tasks for the next session
+## 8. Next tasks
 
-1. `go mod tidy` and add `go-mysql`.
-2. Implement `internal/binlog`: open a binlog file, iterate ROW events, print them.
-3. Implement `internal/reverse`: `INSERT` → `DELETE`, `DELETE` → `INSERT`.
-4. Add `UPDATE` reversal (needs the before image).
-5. Wire `cmd/mulligan generate --binlog <file> --tables <t> --from <ts> --to <ts>`.
-6. Write the v0.1 acceptance test: bad `UPDATE` on a test DB → reverse → row restored.
+v0.1 is done — `internal/change`, `internal/binlog`, `internal/reverse`,
+`internal/cli`, and an end-to-end acceptance suite against a real MySQL.
+
+Toward **v0.2 (live tailing)**:
+
+1. Replica-mode source: connect with `REPLICATION SLAVE`, stream events instead of
+   reading a file, and check the three required settings on connect rather than
+   discovering the problem mid-scan.
+2. Window store — decide SQLite vs bbolt (§0 open question) and index by
+   time / table / user so the timeline is instant.
+3. Carry the originating user and transaction id on `change.Event`; the binlog
+   knows both and the timeline needs them for filtering.
+4. Conflict detection groundwork: record whether a row was touched again after the
+   target statement, ahead of the v0.4 guarded apply.
+
+Known gaps in v0.1, worth closing whenever they get in the way:
+
+- JSON, SET/ENUM and spatial columns are untested against a real server; only the
+  types the acceptance schema exercises are proven.
+- MariaDB is unverified — it spells `binlog_row_metadata` differently, so file mode
+  likely refuses its logs today.
+- A table with no primary key falls back to matching the full row image, which is
+  correct but slow on a large table and matches only one duplicate at a time.
 
 ---
 

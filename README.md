@@ -8,7 +8,9 @@ it at the database's change log, see a timeline of recent writes, preview the
 diff, and generate — or apply — the reverse SQL. No migration to a new database,
 no lock-in.
 
-> Status: **early / planning.** See [PLAN.md](PLAN.md) for the design and roadmap.
+> Status: **v0.1 — engine + CLI.** Reads a MySQL ROW binlog file and generates
+> the SQL that undoes it. Live tailing and the web console are next; see
+> [PLAN.md](PLAN.md) for the roadmap.
 
 ## The idea
 
@@ -21,6 +23,64 @@ reverse → review → apply.
 It's the _bounded_ version of database undo: recent, row-logged changes you
 review before anything runs. Not a magic "undo anything forever" (that's a myth —
 see the plan for why); a focused tool for the accident you actually have.
+
+## Quick start
+
+Mulligan reads what MySQL already writes, so the source server has to log enough
+to reconstruct a row. Three settings, all of which Mulligan checks and refuses
+loudly without:
+
+```ini
+[mysqld]
+binlog_format       = ROW    # log row images, not statements
+binlog_row_image    = FULL   # log every column, not just the changed ones
+binlog_row_metadata = FULL   # log column names and the primary key
+```
+
+`binlog_row_image=FULL` is what makes an `UPDATE` reversible at all — without it
+the log never records the values that were overwritten. `binlog_row_metadata=FULL`
+is what lets Mulligan read a binlog file on its own, without also connecting to
+the database it came from.
+
+Then point it at a binlog and read what it proposes:
+
+```console
+$ mulligan generate -binlog /var/lib/mysql/binlog.000004 -tables shop.orders
+-- mulligan revert script
+-- source: binlog.000004
+-- 2 statements, newest change first
+-- REVIEW BEFORE RUNNING — nothing here has been executed.
+
+-- undo UPDATE shop.orders — binlog.000004:576 at 2026-07-27 12:30:14 UTC
+UPDATE `shop`.`orders` SET `status` = 'packed' WHERE `id` = 2 LIMIT 1;
+
+-- undo UPDATE shop.orders — binlog.000004:576 at 2026-07-27 12:30:14 UTC
+UPDATE `shop`.`orders` SET `status` = 'pending' WHERE `id` = 1 LIMIT 1;
+```
+
+Both rows share a log position because one `UPDATE` statement produced them —
+that's a single event in the log, and a third row was left alone because it
+already had the value being set. Only the `status` column is rewritten: whatever
+else changed on those rows since is not clobbered.
+
+Narrow it with `-from` / `-to`, and save it with `-out revert.sql`. Reversals come
+out newest first, because undoing a sequence means applying the inverses in the
+opposite order.
+
+Nothing is executed. Mulligan proposes; you review, then you run it.
+
+## What it will and won't do
+
+- Reverses `INSERT`, `UPDATE` and `DELETE` on the tables you select, restoring
+  only the columns a statement actually changed.
+- Refuses rather than guesses: a partial row image, a log without column names,
+  or a value it cannot render exactly all stop the whole script. A half-correct
+  revert is worse than none.
+- Does **not** undo `DROP` or `ALTER` — schema changes aren't in the row log.
+- Does **not** resolve conflicts. If something else touched the row after the
+  statement you're undoing, a reversal will clobber it. Conflict warnings land
+  in v0.4.
+- Reaches back only as far as your binlogs are kept.
 
 ## Why not just…
 
