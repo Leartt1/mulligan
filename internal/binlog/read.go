@@ -3,7 +3,6 @@ package binlog
 import (
 	"fmt"
 	"path/filepath"
-	"time"
 
 	"github.com/go-mysql-org/go-mysql/replication"
 
@@ -38,8 +37,12 @@ func newParser() *replication.BinlogParser {
 
 	// Decode temporal columns into time.Time rather than pre-formatted strings,
 	// so the engine controls the literal syntax it emits.
+	//
+	// DATETIME arrives carrying no zone, but TIMESTAMP is stored as an instant
+	// and decodes into this machine's local zone; the engine normalizes it back
+	// to UTC. The parser's timestamp location setting does not help here — it
+	// only applies to the string path this deliberately turns off.
 	p.SetParseTime(true)
-	p.SetTimestampStringLocation(time.UTC)
 
 	// Keep DECIMAL exact. Decoded as a float it would round, and a reversal that
 	// restores a rounded amount is worse than one that refuses to run.
