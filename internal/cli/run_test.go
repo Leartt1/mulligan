@@ -102,6 +102,51 @@ func TestRunReportsItsVersion(t *testing.T) {
 	}
 }
 
+// The file at -out may well be a revert script someone is partway through
+// reviewing. Overwriting it silently is the one destructive thing this command
+// could do, so it refuses — and refuses before doing the work, not after.
+func TestRunRefusesToOverwriteAnExistingFile(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "revert.sql")
+	original := "-- a script someone is still reading\n"
+	if err := os.WriteFile(outPath, []byte(original), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	code, _, stderr := run(t, "generate", "-binlog", "any.000001", "-out", outPath)
+
+	if code != exitUsage {
+		t.Errorf("exit code = %d, want %d", code, exitUsage)
+	}
+	if !strings.Contains(stderr, outPath) {
+		t.Errorf("error does not name the file it refused to touch:\n%s", stderr)
+	}
+
+	kept, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading back: %v", err)
+	}
+	if string(kept) != original {
+		t.Errorf("existing file was modified: %q", kept)
+	}
+}
+
+// Regenerating over yesterday's script is a normal thing to want, so the
+// refusal has to be overridable.
+func TestRunOverwritesAnExistingFileWhenForced(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "revert.sql")
+	if err := os.WriteFile(outPath, []byte("-- stale\n"), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	// The scan still fails on a bogus binlog; what matters is that -force gets
+	// past the overwrite check rather than stopping at it.
+	_, _, stderr := run(t, "generate", "-binlog", "any.000001", "-out", outPath, "-force")
+
+	if strings.Contains(stderr, "already exists") {
+		t.Errorf("-force did not get past the overwrite check:\n%s", stderr)
+	}
+}
+
 // A generated script is meant to be reviewed, kept, and maybe replayed, so it
 // has to be writable to a file rather than only to a terminal.
 func TestRunWritesTheScriptToTheRequestedFile(t *testing.T) {

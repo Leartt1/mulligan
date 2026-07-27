@@ -158,9 +158,15 @@ func opFor(t replication.EventType) (change.Op, error) {
 	case replication.UPDATE_ROWS_EVENTv0,
 		replication.UPDATE_ROWS_EVENTv1,
 		replication.UPDATE_ROWS_EVENTv2,
-		replication.PARTIAL_UPDATE_ROWS_EVENT,
 		replication.MARIADB_UPDATE_ROWS_COMPRESSED_EVENT_V1:
 		return change.Update, nil
+
+	// A partial update event stores a JSON column as a diff against the previous
+	// document rather than as its value. Reversed as though it were a full image
+	// it would write the diff into the column — valid JSON, and silently the
+	// wrong document.
+	case replication.PARTIAL_UPDATE_ROWS_EVENT:
+		return 0, fmt.Errorf("binlog: partial JSON update cannot be reversed; set binlog_row_value_options='' on the source server")
 
 	case replication.DELETE_ROWS_EVENTv0,
 		replication.DELETE_ROWS_EVENTv1,

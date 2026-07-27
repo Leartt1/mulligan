@@ -28,6 +28,14 @@ func Render(w io.Writer, source string, plan []reverse.Reversal) error {
 	fmt.Fprintf(out, "-- %s, newest change first\n", plural(len(plan), "statement"))
 	fmt.Fprintln(out, "-- REVIEW BEFORE RUNNING — nothing here has been executed.")
 
+	// The statements below are written in UTC and utf8mb4, so the session has to
+	// be put into those terms first. A session in another zone would store
+	// TIMESTAMP values shifted by its offset, and one in another charset would
+	// convert the text on the way in. Both fail silently.
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "SET time_zone = '+00:00';")
+	fmt.Fprintln(out, "SET NAMES utf8mb4;")
+
 	for _, r := range plan {
 		ev := r.Event
 		fmt.Fprintf(out, "\n-- undo %s %s.%s — %s:%d at %s\n",

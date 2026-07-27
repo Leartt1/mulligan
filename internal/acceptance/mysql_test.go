@@ -6,6 +6,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/learttytyri/mulligan/internal/change"
+	"github.com/learttytyri/mulligan/internal/cli"
+	"github.com/learttytyri/mulligan/internal/reverse"
 )
 
 const (
@@ -69,9 +73,7 @@ func (s *mysqlServer) waitReady() {
 
 	deadline := time.Now().Add(bootWait)
 	for time.Now().Before(deadline) {
-		cmd := exec.Command("docker", "exec", "--env", "MYSQL_PWD="+rootPass,
-			s.container, "mysql", "--user=root", "--execute=SELECT 1")
-		if err := cmd.Run(); err == nil {
+		if _, err := s.run("SELECT 1"); err == nil {
 			return
 		}
 		time.Sleep(time.Second)
@@ -119,11 +121,56 @@ func (s *mysqlServer) run(args ...string) (string, error) {
 	sql := args[len(args)-1]
 	flags := args[:len(args)-1]
 
-	full := append([]string{"exec", "--env", "MYSQL_PWD=" + rootPass, s.container, "mysql", "--user=root"}, flags...)
+	// Connect over TCP rather than the unix socket. While the image initializes
+	// its data directory it runs a temporary server that listens on the socket
+	// only, and a readiness probe that reaches that one reports success moments
+	// before it is shut down to make way for the real server.
+	full := append([]string{
+		"exec", "--env", "MYSQL_PWD=" + rootPass, s.container,
+		"mysql", "--user=root", "--protocol=TCP", "--host=127.0.0.1",
+		"--default-character-set=utf8mb4",
+	}, flags...)
 	full = append(full, "--execute="+sql)
 
 	out, err := exec.Command("docker", full...).CombinedOutput()
 	return string(out), err
+}
+
+// applyScript pipes a whole generated script into the server, the way an
+// operator runs one after reading it. Feeding it through stdin rather than
+// applying statements one by one is what exercises the session settings the
+// script sets for itself.
+func (s *mysqlServer) applyScript(script string) {
+	s.t.Helper()
+
+	cmd := exec.Command("docker", "exec", "--interactive",
+		"--env", "MYSQL_PWD="+rootPass, s.container,
+		"mysql", "--user=root", "--protocol=TCP", "--host=127.0.0.1",
+		"--default-character-set=utf8mb4")
+	cmd.Stdin = strings.NewReader(script)
+
+	if out, err := cmd.CombinedOutput(); err != nil {
+		s.t.Fatalf("applying script: %v\n%s\nscript was:\n%s", err, out, script)
+	}
+}
+
+// revert generates the script that undoes events and applies it.
+func (s *mysqlServer) revert(t *testing.T, events []change.Event, source string) []reverse.Reversal {
+	t.Helper()
+
+	plan, err := reverse.Plan(events)
+	if err != nil {
+		t.Fatalf("generating the reversal: %v", err)
+	}
+
+	var script strings.Builder
+	if err := cli.Render(&script, source, plan); err != nil {
+		t.Fatalf("rendering the script: %v", err)
+	}
+	t.Logf("generated script:\n%s", script.String())
+
+	s.applyScript(script.String())
+	return plan
 }
 
 // currentBinlog returns the file the server is writing to right now.

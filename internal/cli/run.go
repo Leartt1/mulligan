@@ -60,6 +60,7 @@ Generate flags:
   -from TIME      earliest change to include, inclusive
   -to TIME        latest change to include, inclusive
   -out FILE       write the script here instead of stdout
+  -force          overwrite the -out file if it already exists
 
 Times accept "2006-01-02 15:04:05" (local) or "2006-01-02T15:04:05Z07:00".
 
@@ -78,6 +79,7 @@ func generate(args []string, stdout, stderr io.Writer) int {
 		from       = fs.String("from", "", "earliest change to include, inclusive")
 		to         = fs.String("to", "", "latest change to include, inclusive")
 		outPath    = fs.String("out", "", "write the script here instead of stdout")
+		force      = fs.Bool("force", false, "overwrite the -out file if it already exists")
 	)
 
 	if err := fs.Parse(args); err != nil {
@@ -86,6 +88,16 @@ func generate(args []string, stdout, stderr io.Writer) int {
 	if *binlogPath == "" {
 		fmt.Fprintln(stderr, "mulligan generate: -binlog is required")
 		return exitUsage
+	}
+
+	// Check before scanning rather than after. The file may be a revert script
+	// someone is partway through reviewing, and finding that out at the end —
+	// having already done the work — is the wrong moment.
+	if *outPath != "" && !*force {
+		if _, err := os.Stat(*outPath); err == nil {
+			fmt.Fprintf(stderr, "mulligan generate: %s already exists; pass -force to overwrite it\n", *outPath)
+			return exitUsage
+		}
 	}
 
 	filter, err := buildFilter(*tables, *from, *to)

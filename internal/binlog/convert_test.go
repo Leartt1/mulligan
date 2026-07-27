@@ -235,6 +235,25 @@ func TestConvertRefusesPartialRowImage(t *testing.T) {
 	}
 }
 
+// A partial update event carries a JSON diff rather than the column's value.
+// Reversing it as though it were a full image would write the diff into the
+// column, which parses as valid JSON and is silently the wrong document.
+func TestConvertRefusesPartialJSONUpdates(t *testing.T) {
+	rows := &replication.RowsEvent{
+		Table:       tableMap(),
+		ColumnCount: 2,
+		Rows:        [][]any{{int64(7), "before"}, {int64(7), "after"}},
+	}
+
+	got, err := Convert("binlog.000004", header(replication.PARTIAL_UPDATE_ROWS_EVENT), rows)
+	if err == nil {
+		t.Fatalf("Convert returned %d events for a partial update, want error", len(got))
+	}
+	if !strings.Contains(err.Error(), "binlog_row_value_options") {
+		t.Errorf("error = %v, want it to name the setting to fix", err)
+	}
+}
+
 func TestConvertRejectsNonRowEvent(t *testing.T) {
 	rows := &replication.RowsEvent{
 		Table:       tableMap(),

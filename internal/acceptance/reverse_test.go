@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/learttytyri/mulligan/internal/binlog"
-	"github.com/learttytyri/mulligan/internal/reverse"
 )
 
 const schema = `CREATE TABLE shop.orders (
@@ -65,14 +64,7 @@ func TestV01Acceptance(t *testing.T) {
 			t.Fatalf("found %d change events, want 2:\n%+v", len(events), events)
 		}
 
-		plan, err := reverse.Plan(events)
-		if err != nil {
-			t.Fatalf("generating the reversal: %v", err)
-		}
-		for _, r := range plan {
-			t.Logf("applying: %s", r.Statement)
-			s.exec(r.Statement)
-		}
+		s.revert(t, events, logName)
 
 		restored := s.query(snapshot)
 		if !reflect.DeepEqual(restored, before) {

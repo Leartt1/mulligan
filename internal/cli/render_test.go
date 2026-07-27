@@ -61,6 +61,33 @@ func TestRenderWarnsThatNothingHasBeenExecuted(t *testing.T) {
 	}
 }
 
+// Timestamps are rendered as UTC and text as utf8mb4, so the script has to put
+// the session into those terms before running anything. Without it a session in
+// another zone stores TIMESTAMP values shifted by its offset, and one in another
+// charset converts the text on the way in — both silently.
+func TestRenderPinsSessionTimeZoneAndCharsetBeforeAnyStatement(t *testing.T) {
+	plan := []reverse.Reversal{
+		reversal(change.Update, "orders", 4242, "UPDATE `shop`.`orders` SET `status` = 'pending' WHERE `id` = 7 LIMIT 1;"),
+	}
+
+	var out strings.Builder
+	if err := Render(&out, "binlog.000004", plan); err != nil {
+		t.Fatalf("Render returned error: %v", err)
+	}
+	got := out.String()
+
+	for _, want := range []string{"SET time_zone = '+00:00';", "SET NAMES utf8mb4;"} {
+		at := strings.Index(got, want)
+		if at == -1 {
+			t.Errorf("script does not pin the session with %q:\n%s", want, got)
+			continue
+		}
+		if stmt := strings.Index(got, "UPDATE `shop`"); at > stmt {
+			t.Errorf("%q comes after the first statement, too late to apply:\n%s", want, got)
+		}
+	}
+}
+
 // An empty result is a real answer — the filter matched nothing — and must not
 // look like a script that happens to do nothing.
 func TestRenderSaysSoWhenNothingMatched(t *testing.T) {
