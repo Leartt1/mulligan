@@ -1,13 +1,14 @@
-// Command mulligan is the entry point for the Mulligan undo console.
+// Command mulligan generates SQL that undoes recent logged database changes.
 //
-// It is a work in progress — see PLAN.md for the design and roadmap.
+// It proposes; it does not execute. See PLAN.md for the design and roadmap.
 package main
 
-import "fmt"
+import (
+	"os"
 
-const version = "0.0.0-dev"
+	"github.com/learttytyri/mulligan/internal/cli"
+)
 
 func main() {
-	fmt.Printf("mulligan %s — Ctrl-Z for the database you already have\n", version)
-	fmt.Println("not implemented yet — see PLAN.md")
+	os.Exit(cli.Run(os.Args[1:], os.Stdout, os.Stderr))
 }
