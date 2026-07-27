@@ -22,12 +22,47 @@ func TestEventsFromReturnsChangesForAMatchingRowEvent(t *testing.T) {
 		Event:  rowsEvent(),
 	}
 
-	got, err := eventsFrom("binlog.000004", e, Filter{Tables: []string{"shop.orders"}})
+	got, err := eventsFrom("binlog.000004", e, 0, Filter{Tables: []string{"shop.orders"}})
 	if err != nil {
 		t.Fatalf("eventsFrom returned error: %v", err)
 	}
 	if len(got) != 1 {
 		t.Fatalf("eventsFrom returned %d events, want 1", len(got))
+	}
+}
+
+// MariaDB leaves the position at zero on every event inside a transaction —
+// only the committing event carries the real one — so a row event's own header
+// cannot say where it came from. Provenance is the whole basis for reviewing a
+// generated statement, so the position is reconstructed from the scan instead.
+func TestEventsFromSuppliesThePositionWhenTheLogOmitsIt(t *testing.T) {
+	hdr := header(replication.WRITE_ROWS_EVENTv2)
+	hdr.LogPos = 0
+
+	e := &replication.BinlogEvent{Header: hdr, Event: rowsEvent()}
+
+	got, err := eventsFrom("binlog.000004", e, 4321, Filter{})
+	if err != nil {
+		t.Fatalf("eventsFrom returned error: %v", err)
+	}
+	if got[0].LogPos != 4321 {
+		t.Errorf("position = %d, want the scanned position 4321", got[0].LogPos)
+	}
+}
+
+// When the log does record a position, that is the authority.
+func TestEventsFromPrefersThePositionTheLogRecorded(t *testing.T) {
+	e := &replication.BinlogEvent{
+		Header: header(replication.WRITE_ROWS_EVENTv2),
+		Event:  rowsEvent(),
+	}
+
+	got, err := eventsFrom("binlog.000004", e, 9999, Filter{})
+	if err != nil {
+		t.Fatalf("eventsFrom returned error: %v", err)
+	}
+	if got[0].LogPos != 4242 {
+		t.Errorf("position = %d, want the logged position 4242", got[0].LogPos)
 	}
 }
 
@@ -37,7 +72,7 @@ func TestEventsFromDropsRowEventsOutsideTheFilter(t *testing.T) {
 		Event:  rowsEvent(),
 	}
 
-	got, err := eventsFrom("binlog.000004", e, Filter{Tables: []string{"shop.customers"}})
+	got, err := eventsFrom("binlog.000004", e, 0, Filter{Tables: []string{"shop.customers"}})
 	if err != nil {
 		t.Fatalf("eventsFrom returned error: %v", err)
 	}
@@ -55,7 +90,7 @@ func TestEventsFromIgnoresNonRowEvents(t *testing.T) {
 		Event:  &replication.QueryEvent{Schema: []byte("shop"), Query: []byte("BEGIN")},
 	}
 
-	got, err := eventsFrom("binlog.000004", e, Filter{})
+	got, err := eventsFrom("binlog.000004", e, 0, Filter{})
 	if err != nil {
 		t.Fatalf("eventsFrom returned error for a query event: %v", err)
 	}
@@ -75,7 +110,7 @@ func TestEventsFromFailsOnAnUnreadableRowEvent(t *testing.T) {
 		Event:  rows,
 	}
 
-	if got, err := eventsFrom("binlog.000004", e, Filter{}); err == nil {
+	if got, err := eventsFrom("binlog.000004", e, 0, Filter{}); err == nil {
 		t.Fatalf("eventsFrom returned %d events, want error", len(got))
 	}
 }

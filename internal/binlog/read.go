@@ -9,15 +9,27 @@ import (
 	"github.com/learttytyri/mulligan/internal/change"
 )
 
+// binlogHeaderSize is the length of the magic bytes a binlog file opens with,
+// and so the offset of its first event.
+const binlogHeaderSize = 4
+
 // ReadFile scans a binlog file and returns the change events matching f, in the
 // order the source database applied them.
 func ReadFile(path string, f Filter) ([]change.Event, error) {
 	p := newParser()
 	logFile := filepath.Base(path)
 
+	// Track where the scan is, so an event whose header omits its position can
+	// still be traced back to a place in the file. Events are read in order from
+	// the magic bytes onward, and each header records its own length, so the end
+	// of one event is the start of the next.
+	pos := uint32(binlogHeaderSize)
+
 	var out []change.Event
 	err := p.ParseFile(path, 0, func(e *replication.BinlogEvent) error {
-		events, err := eventsFrom(logFile, e, f)
+		pos += e.Header.EventSize
+
+		events, err := eventsFrom(logFile, e, pos, f)
 		if err != nil {
 			return err
 		}
@@ -61,13 +73,22 @@ func newParser() *replication.BinlogParser {
 // queries all stream past — so anything else is skipped rather than refused. A
 // row event that cannot be interpreted does stop the scan: silently dropping it
 // would return a revert script missing the statement that caused the damage.
-func eventsFrom(logFile string, e *replication.BinlogEvent, f Filter) ([]change.Event, error) {
+// scannedPos is where the scan has reached, used only when the event's own
+// header does not say. MariaDB leaves the position at zero on every event inside
+// a transaction, recording it only on the one that commits, so a row event out of
+// MariaDB cannot otherwise say where it came from.
+func eventsFrom(logFile string, e *replication.BinlogEvent, scannedPos uint32, f Filter) ([]change.Event, error) {
 	rows, ok := e.Event.(*replication.RowsEvent)
 	if !ok {
 		return nil, nil
 	}
 
-	events, err := Convert(logFile, e.Header, rows)
+	hdr := *e.Header
+	if hdr.LogPos == 0 {
+		hdr.LogPos = scannedPos
+	}
+
+	events, err := Convert(logFile, &hdr, rows)
 	if err != nil {
 		return nil, err
 	}
