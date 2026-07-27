@@ -27,7 +27,7 @@ func Convert(logFile string, hdr *replication.EventHeader, rows *replication.Row
 
 	// Anything short of a full row image leaves columns out of the event, and a
 	// reversal built from it would restore the wrong values for the rest.
-	if len(rows.SkippedColumns) > 0 {
+	if skippedColumns(rows) {
 		return nil, fmt.Errorf("binlog: row image for %s is partial; set binlog_row_image=FULL on the source server", table)
 	}
 
@@ -103,6 +103,20 @@ func normalize(v any) any {
 		return change.Raw(x.String())
 	}
 	return v
+}
+
+// skippedColumns reports whether any row image left a column out.
+//
+// The decoder records one skip list per row image, empty when that row carried
+// every column, so the length of the outer slice only counts rows. The omission
+// has to be looked for inside it.
+func skippedColumns(rows *replication.RowsEvent) bool {
+	for _, skipped := range rows.SkippedColumns {
+		if len(skipped) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // columnsOf reads the column names and primary key out of the table map event.

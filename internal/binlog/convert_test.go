@@ -195,6 +195,27 @@ func TestConvertRefusesLogWithoutColumnNames(t *testing.T) {
 	}
 }
 
+// The decoder records one skip list per row image, empty when nothing was
+// skipped. A non-empty outer slice therefore means "there were rows", not
+// "columns were omitted" — reading it as the latter refuses every event a
+// correctly configured server produces.
+func TestConvertAcceptsAFullRowImageThatSkippedNothing(t *testing.T) {
+	rows := &replication.RowsEvent{
+		Table:          tableMap(),
+		ColumnCount:    2,
+		Rows:           [][]any{{int64(7), "new"}, {int64(8), "new"}},
+		SkippedColumns: [][]int{{}, {}},
+	}
+
+	got, err := Convert("binlog.000004", header(replication.WRITE_ROWS_EVENTv2), rows)
+	if err != nil {
+		t.Fatalf("Convert refused a full row image: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("Convert returned %d events, want 2", len(got))
+	}
+}
+
 // Without binlog_row_image=FULL some columns are omitted from the row image, so
 // a reversal would restore the wrong values for whatever was left out.
 func TestConvertRefusesPartialRowImage(t *testing.T) {
