@@ -13,30 +13,52 @@ import (
 )
 
 const (
-	mysqlImage = "mysql:8.0"
-	rootPass   = "mulligan-acceptance"
-	bootWait   = 90 * time.Second
+	rootPass = "mulligan-acceptance"
+	bootWait = 90 * time.Second
 )
 
-// mysqlServer is a throwaway MySQL running in a container, configured to log
+// flavor is one server Mulligan claims to support. MariaDB is a fork with the
+// same binlog settings but its own client binary and its own name for the
+// statement that reports the current log.
+type flavor struct {
+	name   string
+	image  string
+	client string
+}
+
+var (
+	mysql8  = flavor{name: "mysql", image: "mysql:8.0", client: "mysql"}
+	mariadb = flavor{name: "mariadb", image: "mariadb:11.4", client: "mariadb"}
+)
+
+// mysqlServer is a throwaway server running in a container, configured to log
 // exactly what Mulligan needs to reverse a change.
 type mysqlServer struct {
 	t         *testing.T
+	flavor    flavor
 	container string
 }
 
-// startMySQL boots a container and returns once the server answers.
-//
-// The three binlog settings are the ones Mulligan documents as required:
-// ROW format for the row images, FULL row image so an update carries the values
-// it overwrote, and FULL row metadata so the log names its own columns.
+// startMySQL boots the default flavor.
 func startMySQL(t *testing.T) *mysqlServer {
+	t.Helper()
+	return startServer(t, mysql8)
+}
+
+// startServer boots a container and returns once the server answers.
+//
+// The three binlog settings are the ones Mulligan documents as required: ROW
+// format for the row images, FULL row image so an update carries the values it
+// overwrote, and FULL row metadata so the log names its own columns. MariaDB
+// spells all three the same way from 10.5 onward.
+func startServer(t *testing.T, fl flavor) *mysqlServer {
 	t.Helper()
 	requireDocker(t)
 
 	cmd := exec.Command("docker", "run", "--detach", "--rm",
 		"--env", "MYSQL_ROOT_PASSWORD="+rootPass,
-		mysqlImage,
+		"--env", "MARIADB_ROOT_PASSWORD="+rootPass,
+		fl.image,
 		"--log-bin=binlog",
 		"--server-id=1",
 		"--binlog-format=ROW",
@@ -53,10 +75,10 @@ func startMySQL(t *testing.T) *mysqlServer {
 
 	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("starting %s: %v\n%s", mysqlImage, err, stderr.String())
+		t.Fatalf("starting %s: %v\n%s", fl.image, err, stderr.String())
 	}
 
-	s := &mysqlServer{t: t, container: strings.TrimSpace(string(out))}
+	s := &mysqlServer{t: t, flavor: fl, container: strings.TrimSpace(string(out))}
 	t.Cleanup(func() {
 		_ = exec.Command("docker", "rm", "--force", s.container).Run()
 	})
@@ -84,13 +106,13 @@ func (s *mysqlServer) waitReady() {
 	status, _ := exec.Command("docker", "ps", "--all", "--filter", "id="+s.container, "--format", "{{.Status}}").Output()
 	logs, _ := exec.Command("docker", "logs", "--tail", "20", s.container).CombinedOutput()
 	s.t.Fatalf("%s did not accept connections within %s\ncontainer %q status: %s\nlogs:\n%s",
-		mysqlImage, bootWait, s.container, strings.TrimSpace(string(status)), logs)
+		s.flavor.image, bootWait, s.container, strings.TrimSpace(string(status)), logs)
 }
 
 // with returns the same server bound to a subtest, so a failure inside one is
 // reported against that subtest rather than its parent.
 func (s *mysqlServer) with(t *testing.T) *mysqlServer {
-	return &mysqlServer{t: t, container: s.container}
+	return &mysqlServer{t: t, flavor: s.flavor, container: s.container}
 }
 
 // exec runs SQL and fails the test if the server rejects it.
@@ -117,6 +139,11 @@ func (s *mysqlServer) query(sql string) []string {
 	return strings.Split(trimmed, "\n")
 }
 
+// run executes SQL and returns what the client wrote to stdout.
+//
+// Only stdout is returned. MariaDB's client warns on stderr about the
+// connection being unverified, and folding that in would make every parsed
+// result start with a warning line.
 func (s *mysqlServer) run(args ...string) (string, error) {
 	sql := args[len(args)-1]
 	flags := args[:len(args)-1]
@@ -127,13 +154,20 @@ func (s *mysqlServer) run(args ...string) (string, error) {
 	// before it is shut down to make way for the real server.
 	full := append([]string{
 		"exec", "--env", "MYSQL_PWD=" + rootPass, s.container,
-		"mysql", "--user=root", "--protocol=TCP", "--host=127.0.0.1",
+		s.flavor.client, "--user=root", "--protocol=TCP", "--host=127.0.0.1",
 		"--default-character-set=utf8mb4",
 	}, flags...)
 	full = append(full, "--execute="+sql)
 
-	out, err := exec.Command("docker", full...).CombinedOutput()
-	return string(out), err
+	cmd := exec.Command("docker", full...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+
+	out, err := cmd.Output()
+	if err != nil {
+		return stderr.String(), err
+	}
+	return string(out), nil
 }
 
 // applyScript pipes a whole generated script into the server, the way an
@@ -145,7 +179,7 @@ func (s *mysqlServer) applyScript(script string) {
 
 	cmd := exec.Command("docker", "exec", "--interactive",
 		"--env", "MYSQL_PWD="+rootPass, s.container,
-		"mysql", "--user=root", "--protocol=TCP", "--host=127.0.0.1",
+		s.flavor.client, "--user=root", "--protocol=TCP", "--host=127.0.0.1",
 		"--default-character-set=utf8mb4")
 	cmd.Stdin = strings.NewReader(script)
 
@@ -174,16 +208,23 @@ func (s *mysqlServer) revert(t *testing.T, events []change.Event, source string)
 }
 
 // currentBinlog returns the file the server is writing to right now.
+//
+// MariaDB renamed the statement that reports this; MySQL 8.0 only knows the old
+// spelling, so both are tried.
 func (s *mysqlServer) currentBinlog() string {
 	s.t.Helper()
 
-	rows := s.query("SHOW MASTER STATUS")
-	if len(rows) == 0 {
-		s.t.Fatal("SHOW MASTER STATUS returned nothing; is binary logging on?")
+	out, err := s.run("--silent", "--batch", "SHOW BINLOG STATUS")
+	if err != nil {
+		if out, err = s.run("--silent", "--batch", "SHOW MASTER STATUS"); err != nil {
+			s.t.Fatalf("asking for the current binlog: %v\n%s", err, out)
+		}
 	}
-	name, _, _ := strings.Cut(rows[0], "\t")
+
+	line, _, _ := strings.Cut(strings.TrimSpace(out), "\n")
+	name, _, _ := strings.Cut(line, "\t")
 	if name == "" {
-		s.t.Fatalf("could not read a binlog name out of %q", rows[0])
+		s.t.Fatalf("could not read a binlog name out of %q; is binary logging on?", out)
 	}
 	return name
 }
