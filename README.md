@@ -75,6 +75,13 @@ Narrow it with `-from` / `-to`, and save it with `-out revert.sql`. Reversals co
 out newest first, because undoing a sequence means applying the inverses in the
 opposite order.
 
+A window rarely lines up with a log rotation, so name as many files as it spans —
+oldest first, which is what a glob already gives you:
+
+```console
+$ mulligan generate -tables shop.orders /var/lib/mysql/binlog.00000[4-6]
+```
+
 Nothing is executed. Mulligan proposes; you review, then you run it.
 
 ### Generated columns

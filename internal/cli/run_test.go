@@ -44,8 +44,35 @@ func TestRunRequiresABinlogToRead(t *testing.T) {
 	if code != exitUsage {
 		t.Errorf("exit code = %d, want %d", code, exitUsage)
 	}
-	if !strings.Contains(stderr, "-binlog") {
-		t.Errorf("error does not name the missing flag:\n%s", stderr)
+	if !strings.Contains(stderr, "binlog") {
+		t.Errorf("error does not say what is missing:\n%s", stderr)
+	}
+}
+
+// A time window rarely lines up with a log rotation, so the common case is
+// several files. Naming them positionally is what lets a shell glob supply them
+// in order.
+func TestRunAcceptsBinlogsAsPositionalArguments(t *testing.T) {
+	code, _, stderr := run(t, "generate", "first.000001")
+
+	if code != exitFailure {
+		t.Errorf("exit code = %d, want %d (the file does not exist)", code, exitFailure)
+	}
+	if !strings.Contains(stderr, "first.000001") {
+		t.Errorf("positional file was not read:\n%s", stderr)
+	}
+}
+
+func TestRunAcceptsRepeatedBinlogFlags(t *testing.T) {
+	code, _, stderr := run(t, "generate", "-binlog", "first.000001", "-binlog", "second.000002")
+
+	if code != exitFailure {
+		t.Errorf("exit code = %d, want %d", code, exitFailure)
+	}
+	// Reading stops at the first unreadable file rather than skipping it, since a
+	// gap in the middle of a window silently drops changes from the revert.
+	if !strings.Contains(stderr, "first.000001") {
+		t.Errorf("error does not name the file that failed:\n%s", stderr)
 	}
 }
 

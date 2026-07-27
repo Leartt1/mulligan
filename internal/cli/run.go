@@ -51,12 +51,15 @@ func usage(w io.Writer) {
 	fmt.Fprint(w, `mulligan — Ctrl-Z for the database you already have
 
 Usage:
-  mulligan generate -binlog FILE [flags]   generate SQL that undoes logged changes
-  mulligan version                         print the version
-  mulligan help                            print this message
+  mulligan generate [flags] FILE...   generate SQL that undoes logged changes
+  mulligan version                    print the version
+  mulligan help                       print this message
+
+Binlog files are named positionally or with -binlog, and are read in the order
+given — oldest first, which is what a glob over binlog.0000* already produces.
 
 Generate flags:
-  -binlog FILE    MySQL ROW binlog to read (required)
+  -binlog FILE    a binlog to read; may be given more than once
   -tables LIST    comma-separated tables to include, as "table" or "schema.table"
   -from TIME      earliest change to include, inclusive
   -to TIME        latest change to include, inclusive
@@ -78,21 +81,27 @@ func generate(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	fs.Usage = func() { usage(stderr) }
 
+	var binlogs stringList
+	fs.Var(&binlogs, "binlog", "MySQL ROW binlog file to read; repeatable")
+
 	var (
-		binlogPath = fs.String("binlog", "", "MySQL ROW binlog file to read (required)")
-		tables     = fs.String("tables", "", `comma-separated tables, as "table" or "schema.table"`)
-		from       = fs.String("from", "", "earliest change to include, inclusive")
-		to         = fs.String("to", "", "latest change to include, inclusive")
-		outPath    = fs.String("out", "", "write the script here instead of stdout")
-		force      = fs.Bool("force", false, "overwrite the -out file if it already exists")
-		generated  = fs.String("generated", "", "comma-separated generated columns, which are read but never assigned")
+		tables    = fs.String("tables", "", `comma-separated tables, as "table" or "schema.table"`)
+		from      = fs.String("from", "", "earliest change to include, inclusive")
+		to        = fs.String("to", "", "latest change to include, inclusive")
+		outPath   = fs.String("out", "", "write the script here instead of stdout")
+		force     = fs.Bool("force", false, "overwrite the -out file if it already exists")
+		generated = fs.String("generated", "", "comma-separated generated columns, which are read but never assigned")
 	)
 
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
-	if *binlogPath == "" {
-		fmt.Fprintln(stderr, "mulligan generate: -binlog is required")
+
+	// Files may arrive as -binlog flags, as positional arguments, or both. The
+	// positional form is what lets a shell glob expand a rotation into order.
+	files := append([]string(binlogs), fs.Args()...)
+	if len(files) == 0 {
+		fmt.Fprintln(stderr, "mulligan generate: name at least one binlog file, positionally or with -binlog")
 		return exitUsage
 	}
 
@@ -112,10 +121,21 @@ func generate(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
-	events, err := binlog.ReadFile(*binlogPath, filter)
-	if err != nil {
-		fmt.Fprintf(stderr, "mulligan generate: %v\n", err)
-		return exitFailure
+	// Read in the order given. A binlog rotation is a sequence, and undoing a
+	// sequence depends on knowing what came after what; a shell glob over
+	// binlog.0000* already hands them over oldest first.
+	//
+	// A file that cannot be read stops everything rather than being skipped: a
+	// gap in the middle of a window drops changes from the revert without
+	// anything looking wrong.
+	var events []change.Event
+	for _, path := range files {
+		found, err := binlog.ReadFile(path, filter)
+		if err != nil {
+			fmt.Fprintf(stderr, "mulligan generate: %v\n", err)
+			return exitFailure
+		}
+		events = append(events, found...)
 	}
 
 	change.MarkReadOnly(events, splitList(*generated))
@@ -130,7 +150,7 @@ func generate(args []string, stdout, stderr io.Writer) int {
 	// from a complete one, and the whole point is that a human trusts what they
 	// review.
 	var script bytes.Buffer
-	if err := Render(&script, filepath.Base(*binlogPath), plan); err != nil {
+	if err := Render(&script, sourceLabel(files), plan); err != nil {
 		fmt.Fprintf(stderr, "mulligan generate: %v\n", err)
 		return exitFailure
 	}
@@ -173,6 +193,26 @@ func buildFilter(tables, from, to string) (binlog.Filter, error) {
 			f.To.Format(time.RFC3339), f.From.Format(time.RFC3339))
 	}
 	return f, nil
+}
+
+// stringList collects a flag given more than once, so several binlogs can be
+// named without a separator that a filename might itself contain.
+type stringList []string
+
+func (l *stringList) String() string { return strings.Join(*l, ", ") }
+
+func (l *stringList) Set(v string) error {
+	*l = append(*l, v)
+	return nil
+}
+
+// sourceLabel names the logs a script was built from, for its header.
+func sourceLabel(files []string) string {
+	names := make([]string, len(files))
+	for i, f := range files {
+		names[i] = filepath.Base(f)
+	}
+	return strings.Join(names, ", ")
 }
 
 // splitList reads a comma-separated flag value, dropping blanks so that a
