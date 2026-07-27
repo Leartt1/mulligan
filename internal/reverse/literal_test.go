@@ -3,6 +3,8 @@ package reverse
 import (
 	"testing"
 	"time"
+
+	"github.com/learttytyri/mulligan/internal/change"
 )
 
 // Values arriving from a binlog are arbitrary user data. Encoding them wrongly
@@ -34,6 +36,13 @@ func TestLiteralEncodesValuesForMySQL(t *testing.T) {
 
 		{"binary column is hex", []byte{0xde, 0xad, 0xbe, 0xef}, "X'DEADBEEF'"},
 		{"empty binary column", []byte{}, "X''"},
+
+		// A DECIMAL amount is carried as pre-rendered text and emitted as-is;
+		// quoting it would compare a string against a numeric column, and
+		// routing it through float64 would round it.
+		{"raw value is emitted verbatim", change.Raw("1234.56"), "1234.56"},
+		{"raw negative value", change.Raw("-0.001"), "-0.001"},
+		{"raw value keeps trailing zeros of its scale", change.Raw("10.00"), "10.00"},
 
 		{"datetime", time.Date(2026, 7, 27, 13, 45, 5, 0, time.UTC), "'2026-07-27 13:45:05'"},
 		{"datetime keeps microseconds", time.Date(2026, 7, 27, 13, 45, 5, 123456000, time.UTC), "'2026-07-27 13:45:05.123456'"},

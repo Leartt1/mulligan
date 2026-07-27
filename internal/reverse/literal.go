@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/learttytyri/mulligan/internal/change"
 )
 
 // literal renders a column value as a MySQL literal.
@@ -48,6 +50,9 @@ func literal(v any) (string, error) {
 		return strconv.FormatFloat(float64(x), 'g', -1, 32), nil
 	case float64:
 		return strconv.FormatFloat(x, 'g', -1, 64), nil
+
+	case change.Raw:
+		return string(x), nil
 
 	case string:
 		return quoteString(x), nil

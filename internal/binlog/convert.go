@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/go-mysql-org/go-mysql/replication"
+	"github.com/shopspring/decimal"
 
 	"github.com/learttytyri/mulligan/internal/change"
 )
@@ -54,8 +55,8 @@ func Convert(logFile string, hdr *replication.EventHeader, rows *replication.Row
 		out := make([]change.Event, 0, len(rows.Rows)/2)
 		for i := 0; i < len(rows.Rows); i += 2 {
 			ev := base
-			ev.Before = rows.Rows[i]
-			ev.After = rows.Rows[i+1]
+			ev.Before = normalizeRow(rows.Rows[i])
+			ev.After = normalizeRow(rows.Rows[i+1])
 			out = append(out, ev)
 		}
 		return out, nil
@@ -65,13 +66,43 @@ func Convert(logFile string, hdr *replication.EventHeader, rows *replication.Row
 	for _, row := range rows.Rows {
 		ev := base
 		if op == change.Insert {
-			ev.After = row
+			ev.After = normalizeRow(row)
 		} else {
-			ev.Before = row
+			ev.Before = normalizeRow(row)
 		}
 		out = append(out, ev)
 	}
 	return out, nil
+}
+
+// normalizeRow converts a decoded row image into values the reverse engine
+// renders faithfully, leaving everything it already handles untouched.
+func normalizeRow(row []any) []any {
+	out := make([]any, len(row))
+	for i, v := range row {
+		out[i] = normalize(v)
+	}
+	return out
+}
+
+// normalize rewrites values whose Go representation the engine cannot turn back
+// into SQL without losing something.
+//
+// DECIMAL is decoded exactly, as a decimal.Decimal, precisely so that an amount
+// is not rounded through float64. Carrying its own text forward keeps that
+// exactness all the way into the generated statement, and keeps the engine free
+// of any dependency on this source adapter's types.
+func normalize(v any) any {
+	switch x := v.(type) {
+	case decimal.Decimal:
+		return change.Raw(x.String())
+	case *decimal.Decimal:
+		if x == nil {
+			return nil
+		}
+		return change.Raw(x.String())
+	}
+	return v
 }
 
 // columnsOf reads the column names and primary key out of the table map event.

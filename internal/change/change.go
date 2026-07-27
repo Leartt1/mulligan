@@ -19,6 +19,15 @@ const (
 	Delete
 )
 
+// Raw is a column value already rendered in the source database's own syntax,
+// emitted into generated SQL verbatim and unquoted.
+//
+// It exists for values no Go type carries losslessly — DECIMAL is the motivating
+// case, where routing through float64 would round an amount and produce a
+// reversal that restores the wrong number. A source adapter converts such a
+// value once, at the point where it still knows the exact text.
+type Raw string
+
 // Column describes one column of the table the event touched, in the same
 // order as the Before and After value slices.
 type Column struct {
