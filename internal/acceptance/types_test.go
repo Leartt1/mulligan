@@ -24,7 +24,9 @@ const wideSchema = `CREATE TABLE shop.wide (
 	backslashed VARCHAR(64)      NOT NULL,
 	unicode     VARCHAR(64)      NOT NULL,
 	body        TEXT             NOT NULL,
+	prose       TEXT             NOT NULL,
 	blob_col    BLOB             NOT NULL,
+	place       POINT            NOT NULL,
 	state       ENUM('new','packed','shipped') NOT NULL,
 	tags        SET('fragile','gift','rush')   NOT NULL,
 	when_date   DATE             NOT NULL,
@@ -49,7 +51,9 @@ const wideSeed = "INSERT INTO shop.wide VALUES (" +
 	`'back\\slash',` + // a backslash, whose meaning depends on sql_mode
 	"'héllo → 🌍'," + // multi-byte utf8mb4
 	"'line one\nline two'," + // a control character
+	"'A plain sentence, readable in review.'," + // TEXT with nothing needing escape
 	"0xDEADBEEF," +
+	"ST_PointFromText('POINT(12.5 -3.25)')," +
 	"'packed'," +
 	"'fragile,rush'," +
 	"'2026-07-27'," +
@@ -61,8 +65,8 @@ const wideSeed = "INSERT INTO shop.wide VALUES (" +
 	"NULL)"
 
 const wideSnapshot = `SELECT id, big, negative, amount, ratio, flag+0, tiny, label, quoted,
-	backslashed, unicode, body, HEX(blob_col), state, tags, when_date, when_time,
-	when_dt, when_ts, when_year, doc, maybe FROM shop.wide ORDER BY id`
+	backslashed, unicode, body, prose, HEX(blob_col), ST_AsText(place), state, tags,
+	when_date, when_time, when_dt, when_ts, when_year, doc, maybe FROM shop.wide ORDER BY id`
 
 // Every column type has to survive a round trip through the engine: damage the
 // row, generate the reversal, apply it, and land back on exactly what was there.
@@ -82,7 +86,8 @@ func TestReversalRestoresEveryColumnType(t *testing.T) {
 	s.exec(`UPDATE shop.wide SET
 		big = 1, negative = 0, amount = 0.0001, ratio = 9.5, flag = b'00000001',
 		tiny = 1, label = 'changed', quoted = 'changed', backslashed = 'changed',
-		unicode = 'changed', body = 'changed', blob_col = 0x00,
+		unicode = 'changed', body = 'changed', prose = 'changed', blob_col = 0x00,
+		place = ST_PointFromText('POINT(0 0)'),
 		state = 'new', tags = 'gift', when_date = '2000-01-01',
 		when_time = '00:00:00', when_dt = '2000-01-01 00:00:00',
 		when_ts = '2000-01-01 00:00:00', when_year = 2000,
