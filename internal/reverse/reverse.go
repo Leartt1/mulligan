@@ -42,13 +42,16 @@ func deleteRow(ev change.Event) (string, error) {
 // changed the key itself.
 func updateRow(ev change.Event) (string, error) {
 	var sets []string
+	skippedReadOnly := false
+
 	for i, c := range ev.Columns {
+		if equalValue(ev.Before[i], ev.After[i]) {
+			continue
+		}
 		// A column the database computes rejects any assignment, and restoring
 		// what it derives from brings it back on its own.
 		if c.ReadOnly {
-			continue
-		}
-		if equalValue(ev.Before[i], ev.After[i]) {
+			skippedReadOnly = true
 			continue
 		}
 		lit, err := literal(ev.Before[i])
@@ -58,7 +61,10 @@ func updateRow(ev change.Event) (string, error) {
 		sets = append(sets, fmt.Sprintf("%s = %s", quoteIdent(c.Name), lit))
 	}
 	if len(sets) == 0 {
-		return "", fmt.Errorf("reverse: update changed no columns, nothing to revert")
+		if skippedReadOnly {
+			return "", fmt.Errorf("reverse: every column the update changed on %s is marked read-only, leaving nothing to restore", qualify(ev.Schema, ev.Table))
+		}
+		return "", fmt.Errorf("reverse: update changed no columns on %s, nothing to revert", qualify(ev.Schema, ev.Table))
 	}
 	where, err := whereClause(ev.Columns, ev.After)
 	if err != nil {

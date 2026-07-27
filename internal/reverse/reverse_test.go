@@ -1,6 +1,7 @@
 package reverse
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/learttytyri/mulligan/internal/change"
@@ -158,6 +159,30 @@ func TestStatementOmitsReadOnlyColumnsFromInsert(t *testing.T) {
 	want := "INSERT INTO `shop`.`invoices` (`id`, `net`) VALUES (1, 100);"
 	if got != want {
 		t.Errorf("Statement() =\n  %s\nwant\n  %s", got, want)
+	}
+}
+
+// Naming too many columns as generated is an easy mistake, and the resulting
+// refusal has to point at that rather than claim the update changed nothing.
+func TestStatementSaysWhenEveryChangedColumnIsReadOnly(t *testing.T) {
+	ev := change.Event{
+		Schema: "shop",
+		Table:  "invoices",
+		Op:     change.Update,
+		Columns: []change.Column{
+			{Name: "id", PrimaryKey: true},
+			{Name: "tax", ReadOnly: true},
+		},
+		Before: []any{int64(1), int64(20)},
+		After:  []any{int64(1), int64(199)},
+	}
+
+	got, err := Statement(ev)
+	if err == nil {
+		t.Fatalf("Statement() = %q, want error", got)
+	}
+	if !strings.Contains(err.Error(), "read-only") {
+		t.Errorf("error = %v, want it to point at the read-only columns", err)
 	}
 }
 
