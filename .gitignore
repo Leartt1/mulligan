@@ -1,0 +1,19 @@
+# binaries
+/mulligan
+/dist/
+*.exe
+
+# go
+/vendor/
+*.test
+*.out
+coverage.*
+
+# local config / secrets
+.env
+*.local
+
+# editor / os
+.DS_Store
+.idea/
+.vscode/
