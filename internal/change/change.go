@@ -28,6 +28,20 @@ const (
 // value once, at the point where it still knows the exact text.
 type Raw string
 
+// String names the SQL statement kind the operation corresponds to, for use in
+// output an operator reads.
+func (o Op) String() string {
+	switch o {
+	case Insert:
+		return "INSERT"
+	case Update:
+		return "UPDATE"
+	case Delete:
+		return "DELETE"
+	}
+	return "UNKNOWN"
+}
+
 // Column describes one column of the table the event touched, in the same
 // order as the Before and After value slices.
 type Column struct {
