@@ -145,6 +145,13 @@ database you *already run*. That's Mulligan.
   that is not valid UTF-8 is emitted as a hex literal rather than quoted.
 - **Permissions.** Needs `REPLICATION SLAVE` + `REPLICATION CLIENT` (live) or read
   access to binlog files.
+- **MariaDB omits event positions inside a transaction.** It records the real
+  position only on the event that commits, leaving zero on the row events
+  themselves. Since provenance is what makes a generated statement reviewable, the
+  scan reconstructs the position from event sizes. *(MariaDB 11.4 is otherwise
+  compatible — same three settings, same spelling, verified end-to-end. The
+  earlier note here claiming it spelled `binlog_row_metadata` differently was
+  wrong.)*
 - **Performance.** Large binlogs — stream, don't load whole; index into the store.
 
 ---
@@ -182,18 +189,15 @@ Known gaps in v0.1, worth closing whenever they get in the way:
   optional metadata has no flag for them, so the log genuinely cannot tell us.
   A v0.2 replica connection could read `information_schema` once and mark them
   automatically — the natural place to fix this.
-- **Spatial and vector columns are untested.** Everything else in a real table is
-  covered end-to-end by `internal/acceptance`: unsigned 64-bit, negative ints,
-  DECIMAL, DOUBLE, BIT, ENUM, SET, DATE/TIME/DATETIME/TIMESTAMP with fractional
-  seconds, YEAR, JSON, TEXT, BLOB, NULL, utf8mb4, embedded quotes and backslashes.
-- **TEXT columns render as hex** because they arrive as `[]byte`, which is
-  indistinguishable from BLOB at that layer. Correct, but harder to review than it
-  needs to be; the column charset in the table map could tell them apart.
-- **MariaDB is unverified** — it spells `binlog_row_metadata` differently, so file
-  mode likely refuses its logs today.
 - **A table with no primary key** falls back to matching the full row image, which
   is correct but slow on a large table and matches one duplicate at a time.
-- **One file per run.** A window spanning rotated logs needs a run per file.
+- **Vector columns are untested** (MySQL 9). Everything else a real table holds is
+  covered end-to-end by `internal/acceptance`: unsigned 64-bit, negative ints,
+  DECIMAL, DOUBLE, BIT, ENUM, SET, DATE/TIME/DATETIME/TIMESTAMP with fractional
+  seconds, YEAR, JSON, TEXT, BLOB, POINT, NULL, utf8mb4, embedded quotes and
+  backslashes.
+- **The whole matching event set is held in memory.** §6 called for streaming and
+  this does not stream. Fine for a window; not for a whole retention period.
 
 ---
 

@@ -42,6 +42,9 @@ the log never records the values that were overwritten. `binlog_row_metadata=FUL
 is what lets Mulligan read a binlog file on its own, without also connecting to
 the database it came from.
 
+MariaDB 10.5+ spells all three the same way, and is covered by the same
+end-to-end tests as MySQL.
+
 Then point it at a binlog and read what it proposes:
 
 ```console
@@ -126,6 +129,12 @@ Mulligan works with the database you _already have_, and it's open source.
 
 MySQL/MariaDB first (via ROW binlog), Postgres next (via WAL). Engine + CLI →
 live timeline → web console → guarded apply. Details in [PLAN.md](PLAN.md).
+
+## Security
+
+The generated script is a code generator's output whose input is whatever anyone
+could write into a row, so quoting is the thing that matters most here. See
+[SECURITY.md](SECURITY.md) for the threat model and the limits.
 
 ## License
 
