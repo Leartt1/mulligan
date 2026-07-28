@@ -56,7 +56,7 @@ func literal(v any) (string, error) {
 		// This is the only value that reaches the script without quoting, which
 		// makes it the only place a source adapter could put text straight into a
 		// statement an operator runs by hand. Restrict it to what it exists for.
-		if !numericRaw(string(x)) {
+		if !change.ValidRaw(string(x)) {
 			return "", fmt.Errorf("reverse: raw value %q is not a number; raw values are emitted unquoted and must not carry arbitrary SQL", string(x))
 		}
 		return string(x), nil
@@ -112,53 +112,6 @@ func safeToQuote(s string) bool {
 		}
 	}
 	return utf8.ValidString(s)
-}
-
-// numericRaw reports whether s is a plain SQL number: an optional sign, digits,
-// an optional fraction, and an optional exponent, with nothing else around it.
-//
-// Trailing whitespace is rejected along with everything else, since a value that
-// needs trimming did not come from a number formatter and should be looked at.
-func numericRaw(s string) bool {
-	i := 0
-	if i < len(s) && (s[i] == '+' || s[i] == '-') {
-		i++
-	}
-
-	start := i
-	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
-		i++
-	}
-	if i == start {
-		return false
-	}
-
-	if i < len(s) && s[i] == '.' {
-		i++
-		start = i
-		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
-			i++
-		}
-		if i == start {
-			return false
-		}
-	}
-
-	if i < len(s) && (s[i] == 'e' || s[i] == 'E') {
-		i++
-		if i < len(s) && (s[i] == '+' || s[i] == '-') {
-			i++
-		}
-		start = i
-		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
-			i++
-		}
-		if i == start {
-			return false
-		}
-	}
-
-	return i == len(s)
 }
 
 // hexLiteral renders bytes as X'...', which every sql_mode reads identically.
