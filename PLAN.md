@@ -22,7 +22,11 @@ source.
 
 **Genuinely open questions** (don't pre-decide — resolve when we hit them):
 - Web UI stack: React vs Svelte vs server-rendered + htmx. Lean minimal.
-- Do we persist a rolling event window (SQLite/bolt) or re-scan binlog on demand? Affects "live timeline" feel.
+- ~~Do we persist a rolling event window (SQLite/bolt) or re-scan binlog on demand?~~
+  **Resolved 2026-07-27: persist, in SQLite.** A timeline that re-scans cannot feel
+  live, and the query the console needs — by time, table and user — is an index,
+  which is the thing SQLite is. Pure-Go `modernc.org/sqlite`, so the single static
+  binary survives.
 - Auth model for the console (v1 can be single-user / bind-to-localhost only).
 
 ---
@@ -171,7 +175,14 @@ database you *already run*. That's Mulligan.
 v0.1 is done — `internal/change`, `internal/binlog`, `internal/reverse`,
 `internal/cli`, and an end-to-end acceptance suite against a real MySQL.
 
-Toward **v0.2 (live tailing)**:
+**v0.2 is designed** — see
+[docs/superpowers/specs/2026-07-28-live-tailing-design.md](docs/superpowers/specs/2026-07-28-live-tailing-design.md).
+An adversarial review of that design confirmed 16 defects before any code was
+written; the criticals and highs are folded into the spec, and §10 of it records
+what was deliberately deferred. The largest deferred unknown is **DDL drift** — a
+revert spanning `ALTER TABLE` — which may also affect shipped v0.1 and is unverified.
+
+Earlier sketch, superseded by the spec but kept for the ordering:
 
 1. Replica-mode source: connect with `REPLICATION SLAVE`, stream events instead of
    reading a file, and check the three required settings on connect rather than
