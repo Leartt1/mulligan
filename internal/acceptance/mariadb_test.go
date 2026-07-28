@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/learttytyri/mulligan/internal/binlog"
+	"github.com/learttytyri/mulligan/internal/change"
 )
 
 // MariaDB is a fork with its own binlog quirks, and the README claims MySQL and
@@ -29,7 +30,7 @@ func TestMariaDBReversalRestoresTheRows(t *testing.T) {
 		t.Fatal("the update changed nothing, so there is nothing to test")
 	}
 
-	events, err := binlog.ReadFile(s.copyBinlog(logName), binlog.Filter{Tables: []string{"shop.orders"}})
+	events, err := binlog.ReadFile(s.copyBinlog(logName), change.Filter{Tables: []string{"shop.orders"}})
 	if err != nil {
 		t.Fatalf("reading the binlog: %v", err)
 	}
@@ -69,7 +70,7 @@ func TestMariaDBRefusesALogWithoutColumnNames(t *testing.T) {
 	logName := s.currentBinlog()
 	s.exec("UPDATE shop.orders SET status = 'lost' WHERE id = 1")
 
-	_, err := binlog.ReadFile(s.copyBinlog(logName), binlog.Filter{})
+	_, err := binlog.ReadFile(s.copyBinlog(logName), change.Filter{})
 	if err == nil {
 		t.Fatal("read a log with no column names without complaint, want an error")
 	}

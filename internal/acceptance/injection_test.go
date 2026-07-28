@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/learttytyri/mulligan/internal/binlog"
+	"github.com/learttytyri/mulligan/internal/change"
 )
 
 // Anyone who can write a row can choose what ends up in a generated script, and
@@ -59,7 +60,7 @@ func TestHostileRowDataCannotInjectIntoTheGeneratedScript(t *testing.T) {
 		t.Fatal("the update changed nothing, so there is nothing to test")
 	}
 
-	events, err := binlog.ReadFile(s.copyBinlog(logName), binlog.Filter{Tables: []string{"shop.ord`ers"}})
+	events, err := binlog.ReadFile(s.copyBinlog(logName), change.Filter{Tables: []string{"shop.ord`ers"}})
 	if err != nil {
 		t.Fatalf("reading the binlog: %v", err)
 	}
@@ -93,7 +94,7 @@ func TestBacktickedIdentifiersAreEscapedInGeneratedSQL(t *testing.T) {
 
 	s.exec("DELETE FROM shop.`ord``ers` WHERE `id` = 1")
 
-	events, err := binlog.ReadFile(s.copyBinlog(logName), binlog.Filter{})
+	events, err := binlog.ReadFile(s.copyBinlog(logName), change.Filter{})
 	if err != nil {
 		t.Fatalf("reading the binlog: %v", err)
 	}

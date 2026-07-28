@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/learttytyri/mulligan/internal/binlog"
+	"github.com/learttytyri/mulligan/internal/change"
 )
 
 const schema = `CREATE TABLE shop.orders (
@@ -53,7 +54,7 @@ func TestV01Acceptance(t *testing.T) {
 			t.Fatal("the bad update changed nothing, so there is nothing to test")
 		}
 
-		events, err := binlog.ReadFile(s.copyBinlog(logName), binlog.Filter{Tables: []string{"shop.orders"}})
+		events, err := binlog.ReadFile(s.copyBinlog(logName), change.Filter{Tables: []string{"shop.orders"}})
 		if err != nil {
 			t.Fatalf("reading the binlog: %v", err)
 		}
@@ -84,7 +85,7 @@ func TestV01Acceptance(t *testing.T) {
 		logName := s.currentBinlog()
 		s.exec("UPDATE shop.orders SET status = 'lost' WHERE id = 1")
 
-		_, err := binlog.ReadFile(s.copyBinlog(logName), binlog.Filter{})
+		_, err := binlog.ReadFile(s.copyBinlog(logName), change.Filter{})
 		if err == nil {
 			t.Fatal("read a partial row image without complaint, want an error")
 		}
@@ -105,7 +106,7 @@ func TestV01Acceptance(t *testing.T) {
 		logName := s.currentBinlog()
 		s.exec("UPDATE shop.orders SET status = 'lost' WHERE id = 2")
 
-		_, err := binlog.ReadFile(s.copyBinlog(logName), binlog.Filter{})
+		_, err := binlog.ReadFile(s.copyBinlog(logName), change.Filter{})
 		if err == nil {
 			t.Fatal("read a log with no column names without complaint, want an error")
 		}

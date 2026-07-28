@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/go-mysql-org/go-mysql/replication"
+
+	"github.com/learttytyri/mulligan/internal/change"
 )
 
 func rowsEvent() *replication.RowsEvent {
@@ -22,7 +24,7 @@ func TestEventsFromReturnsChangesForAMatchingRowEvent(t *testing.T) {
 		Event:  rowsEvent(),
 	}
 
-	got, err := eventsFrom("binlog.000004", e, 0, Filter{Tables: []string{"shop.orders"}})
+	got, err := eventsFrom("binlog.000004", e, 0, change.Filter{Tables: []string{"shop.orders"}})
 	if err != nil {
 		t.Fatalf("eventsFrom returned error: %v", err)
 	}
@@ -41,7 +43,7 @@ func TestEventsFromSuppliesThePositionWhenTheLogOmitsIt(t *testing.T) {
 
 	e := &replication.BinlogEvent{Header: hdr, Event: rowsEvent()}
 
-	got, err := eventsFrom("binlog.000004", e, 4321, Filter{})
+	got, err := eventsFrom("binlog.000004", e, 4321, change.Filter{})
 	if err != nil {
 		t.Fatalf("eventsFrom returned error: %v", err)
 	}
@@ -57,7 +59,7 @@ func TestEventsFromPrefersThePositionTheLogRecorded(t *testing.T) {
 		Event:  rowsEvent(),
 	}
 
-	got, err := eventsFrom("binlog.000004", e, 9999, Filter{})
+	got, err := eventsFrom("binlog.000004", e, 9999, change.Filter{})
 	if err != nil {
 		t.Fatalf("eventsFrom returned error: %v", err)
 	}
@@ -72,7 +74,7 @@ func TestEventsFromDropsRowEventsOutsideTheFilter(t *testing.T) {
 		Event:  rowsEvent(),
 	}
 
-	got, err := eventsFrom("binlog.000004", e, 0, Filter{Tables: []string{"shop.customers"}})
+	got, err := eventsFrom("binlog.000004", e, 0, change.Filter{Tables: []string{"shop.customers"}})
 	if err != nil {
 		t.Fatalf("eventsFrom returned error: %v", err)
 	}
@@ -90,7 +92,7 @@ func TestEventsFromIgnoresNonRowEvents(t *testing.T) {
 		Event:  &replication.QueryEvent{Schema: []byte("shop"), Query: []byte("BEGIN")},
 	}
 
-	got, err := eventsFrom("binlog.000004", e, 0, Filter{})
+	got, err := eventsFrom("binlog.000004", e, 0, change.Filter{})
 	if err != nil {
 		t.Fatalf("eventsFrom returned error for a query event: %v", err)
 	}
@@ -110,7 +112,7 @@ func TestEventsFromFailsOnAnUnreadableRowEvent(t *testing.T) {
 		Event:  rows,
 	}
 
-	if got, err := eventsFrom("binlog.000004", e, 0, Filter{}); err == nil {
+	if got, err := eventsFrom("binlog.000004", e, 0, change.Filter{}); err == nil {
 		t.Fatalf("eventsFrom returned %d events, want error", len(got))
 	}
 }
@@ -121,13 +123,13 @@ func TestReadFileRejectsAFileThatIsNotABinlog(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 
-	if got, err := ReadFile(path, Filter{}); err == nil {
+	if got, err := ReadFile(path, change.Filter{}); err == nil {
 		t.Fatalf("ReadFile returned %d events, want error", len(got))
 	}
 }
 
 func TestReadFileReportsAMissingFile(t *testing.T) {
-	if got, err := ReadFile(filepath.Join(t.TempDir(), "absent.000001"), Filter{}); err == nil {
+	if got, err := ReadFile(filepath.Join(t.TempDir(), "absent.000001"), change.Filter{}); err == nil {
 		t.Fatalf("ReadFile returned %d events, want error", len(got))
 	}
 }

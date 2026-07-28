@@ -44,7 +44,7 @@ func TestReversalHandlesGeneratedColumns(t *testing.T) {
 		t.Fatal("the update changed nothing, so there is nothing to test")
 	}
 
-	events, err := binlog.ReadFile(s.copyBinlog(logName), binlog.Filter{Tables: []string{"shop.invoices"}})
+	events, err := binlog.ReadFile(s.copyBinlog(logName), change.Filter{Tables: []string{"shop.invoices"}})
 	if err != nil {
 		t.Fatalf("reading the binlog: %v", err)
 	}

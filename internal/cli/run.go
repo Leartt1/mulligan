@@ -171,8 +171,8 @@ func generate(args []string, stdout, stderr io.Writer) int {
 	return exitOK
 }
 
-func buildFilter(tables, from, to string) (binlog.Filter, error) {
-	f := binlog.Filter{Tables: splitList(tables)}
+func buildFilter(tables, from, to string) (change.Filter, error) {
+	f := change.Filter{Tables: splitList(tables)}
 
 	var err error
 	if from != "" {

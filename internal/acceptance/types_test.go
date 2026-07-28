@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/learttytyri/mulligan/internal/binlog"
+	"github.com/learttytyri/mulligan/internal/change"
 )
 
 // wideSchema covers the column types a real table actually uses. Each one is a
@@ -97,7 +98,7 @@ func TestReversalRestoresEveryColumnType(t *testing.T) {
 		t.Fatal("the update changed nothing, so there is nothing to test")
 	}
 
-	events, err := binlog.ReadFile(s.copyBinlog(logName), binlog.Filter{Tables: []string{"shop.wide"}})
+	events, err := binlog.ReadFile(s.copyBinlog(logName), change.Filter{Tables: []string{"shop.wide"}})
 	if err != nil {
 		t.Fatalf("reading the binlog: %v", err)
 	}
@@ -130,7 +131,7 @@ func TestReinsertingADeletedRowRestoresEveryColumnType(t *testing.T) {
 
 	s.exec("DELETE FROM shop.wide WHERE id = 1")
 
-	events, err := binlog.ReadFile(s.copyBinlog(logName), binlog.Filter{Tables: []string{"shop.wide"}})
+	events, err := binlog.ReadFile(s.copyBinlog(logName), change.Filter{Tables: []string{"shop.wide"}})
 	if err != nil {
 		t.Fatalf("reading the binlog: %v", err)
 	}

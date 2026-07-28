@@ -15,8 +15,8 @@ const binlogHeaderSize = 4
 
 // ReadFile scans a binlog file and returns the change events matching f, in the
 // order the source database applied them.
-func ReadFile(path string, f Filter) ([]change.Event, error) {
-	p := newParser()
+func ReadFile(path string, f change.Filter) ([]change.Event, error) {
+	p := newParser(DefaultDecodeOptions())
 	logFile := filepath.Base(path)
 
 	// Track where the scan is, so an event whose header omits its position can
@@ -42,28 +42,14 @@ func ReadFile(path string, f Filter) ([]change.Event, error) {
 	return out, nil
 }
 
-// newParser configures value decoding so that what the engine renders back into
-// SQL means the same thing it meant in the source row.
-func newParser() *replication.BinlogParser {
+// newParser builds a file parser decoding by the shared contract.
+//
+// DATETIME arrives carrying no zone, but TIMESTAMP is stored as an instant and
+// decodes into this machine's local zone; the engine normalizes it back to UTC
+// when it renders.
+func newParser(opts DecodeOptions) *replication.BinlogParser {
 	p := replication.NewBinlogParser()
-
-	// Decode temporal columns into time.Time rather than pre-formatted strings,
-	// so the engine controls the literal syntax it emits.
-	//
-	// DATETIME arrives carrying no zone, but TIMESTAMP is stored as an instant
-	// and decodes into this machine's local zone; the engine normalizes it back
-	// to UTC. The parser's timestamp location setting does not help here — it
-	// only applies to the string path this deliberately turns off.
-	p.SetParseTime(true)
-
-	// Keep DECIMAL exact. Decoded as a float it would round, and a reversal that
-	// restores a rounded amount is worse than one that refuses to run.
-	p.SetUseDecimal(true)
-
-	// A binlog whose checksum does not match has been truncated or corrupted,
-	// and rows decoded out of it cannot be trusted to reverse anything.
-	p.SetVerifyChecksum(true)
-
+	opts.applyToParser(p)
 	return p
 }
 
@@ -77,7 +63,7 @@ func newParser() *replication.BinlogParser {
 // header does not say. MariaDB leaves the position at zero on every event inside
 // a transaction, recording it only on the one that commits, so a row event out of
 // MariaDB cannot otherwise say where it came from.
-func eventsFrom(logFile string, e *replication.BinlogEvent, scannedPos uint32, f Filter) ([]change.Event, error) {
+func eventsFrom(logFile string, e *replication.BinlogEvent, scannedPos uint32, f change.Filter) ([]change.Event, error) {
 	rows, ok := e.Event.(*replication.RowsEvent)
 	if !ok {
 		return nil, nil

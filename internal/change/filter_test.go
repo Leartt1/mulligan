@@ -1,10 +1,8 @@
-package binlog
+package change
 
 import (
 	"testing"
 	"time"
-
-	"github.com/learttytyri/mulligan/internal/change"
 )
 
 func at(s string) time.Time {
@@ -15,8 +13,8 @@ func at(s string) time.Time {
 	return t
 }
 
-func event(schema, table, when string) change.Event {
-	return change.Event{Schema: schema, Table: table, At: at(when)}
+func event(schema, table, when string) Event {
+	return Event{Schema: schema, Table: table, At: at(when)}
 }
 
 // The zero filter is what a caller gets by leaving every flag unset, and it has
@@ -33,7 +31,7 @@ func TestFilterMatchesTablesByName(t *testing.T) {
 	tests := []struct {
 		name   string
 		tables []string
-		ev     change.Event
+		ev     Event
 		want   bool
 	}{
 		{"bare name matches that table", []string{"orders"}, event("shop", "orders", "2026-07-27T12:00:00Z"), true},
@@ -64,7 +62,7 @@ func TestFilterTimeBoundsAreInclusive(t *testing.T) {
 	tests := []struct {
 		name string
 		f    Filter
-		ev   change.Event
+		ev   Event
 		want bool
 	}{
 		{"before from is rejected", Filter{From: from}, event("shop", "orders", "2026-07-27T11:59:59Z"), false},

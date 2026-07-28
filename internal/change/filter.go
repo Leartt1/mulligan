@@ -1,10 +1,8 @@
-package binlog
+package change
 
 import (
 	"strings"
 	"time"
-
-	"github.com/learttytyri/mulligan/internal/change"
 )
 
 // Filter narrows a scan to the events an operator asked about.
@@ -26,7 +24,7 @@ type Filter struct {
 }
 
 // Match reports whether ev falls inside the filter.
-func (f Filter) Match(ev change.Event) bool {
+func (f Filter) Match(ev Event) bool {
 	if !f.matchesTable(ev.Schema, ev.Table) {
 		return false
 	}
