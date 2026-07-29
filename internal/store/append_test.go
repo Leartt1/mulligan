@@ -48,7 +48,7 @@ func TestAppendStoresATransactionAndReadsItBack(t *testing.T) {
 		t.Fatalf("AppendTransaction returned error: %v", err)
 	}
 
-	got, err := s.Events(change.Filter{})
+	got, err := s.Events(change.Filter{}, at(1785000010))
 	if err != nil {
 		t.Fatalf("Events returned error: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestAppendingTheSameTransactionTwiceStoresItOnce(t *testing.T) {
 		t.Fatalf("re-delivery must be accepted quietly, not refused: %v", err)
 	}
 
-	got, err := s.Events(change.Filter{})
+	got, err := s.Events(change.Filter{}, at(1785000010))
 	if err != nil {
 		t.Fatalf("Events returned error: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestTransactionsWithinTheSameSecondAreKeptApart(t *testing.T) {
 		t.Fatalf("AppendTransaction returned error: %v", err)
 	}
 
-	got, err := s.Events(change.Filter{})
+	got, err := s.Events(change.Filter{}, at(1785000010))
 	if err != nil {
 		t.Fatalf("Events returned error: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestEventsComeBackInTheOrderTheyWereApplied(t *testing.T) {
 		t.Fatalf("AppendTransaction returned error: %v", err)
 	}
 
-	got, err := s.Events(change.Filter{})
+	got, err := s.Events(change.Filter{}, at(1785000010))
 	if err != nil {
 		t.Fatalf("Events returned error: %v", err)
 	}
@@ -207,12 +207,12 @@ func TestATransactionWithAnUnstorableValueIsRejectedWhole(t *testing.T) {
 		t.Fatal("AppendTransaction accepted a value it cannot encode")
 	}
 
-	got, err := s.Events(change.Filter{})
-	if err != nil {
-		t.Fatalf("Events returned error: %v", err)
+	var stored int
+	if err := s.db.QueryRow(`SELECT count(*) FROM row_change`).Scan(&stored); err != nil {
+		t.Fatalf("counting stored rows returned error: %v", err)
 	}
-	if len(got) != 0 {
-		t.Errorf("%d events survived a rejected transaction, want none", len(got))
+	if stored != 0 {
+		t.Errorf("%d row changes survived a rejected transaction, want none", stored)
 	}
 
 	cp, err := s.Checkpoint()
@@ -234,7 +234,7 @@ func TestEventsCanBeNarrowedByTableAndTime(t *testing.T) {
 		t.Fatalf("AppendTransaction returned error: %v", err)
 	}
 
-	byTable, err := s.Events(change.Filter{Tables: []string{"shop.customers"}})
+	byTable, err := s.Events(change.Filter{Tables: []string{"shop.customers"}}, at(1785000070))
 	if err != nil {
 		t.Fatalf("Events returned error: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestEventsCanBeNarrowedByTableAndTime(t *testing.T) {
 		t.Errorf("filtering by table returned %d events, want just customers", len(byTable))
 	}
 
-	byTime, err := s.Events(change.Filter{From: at(1785000030)})
+	byTime, err := s.Events(change.Filter{From: at(1785000030)}, at(1785000070))
 	if err != nil {
 		t.Fatalf("Events returned error: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestTheOriginatingStatementIsStoredPerRowAndNotInherited(t *testing.T) {
 		t.Fatalf("AppendTransaction returned error: %v", err)
 	}
 
-	got, err := s.Events(change.Filter{})
+	got, err := s.Events(change.Filter{}, at(1785000010))
 	if err != nil {
 		t.Fatalf("Events returned error: %v", err)
 	}

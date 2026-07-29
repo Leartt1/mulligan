@@ -210,14 +210,41 @@ func (s *Store) Checkpoint() (change.Checkpoint, error) {
 }
 
 // Events returns the stored changes matching f, in the order the source applied
-// them.
+// them, or refuses if the store cannot answer for the window.
+//
+// Coverage and the rows are read in one transaction on purpose. Read
+// separately, a prune committing in between would truncate the front of the
+// window after it had been judged sound, and the result would be
+// indistinguishable from those changes never having existed.
 //
 // Order comes from the store's own row identity rather than from the commit
 // timestamp: binlog timestamps have one-second resolution, so ordering by time
 // would scramble transactions committed within the same second, and undoing a
 // sequence in the wrong order restores a state that never existed.
-func (s *Store) Events(f change.Filter) ([]change.Event, error) {
-	rows, err := s.db.Query(
+func (s *Store) Events(f change.Filter, now time.Time) ([]change.Event, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("store: reading changes from %s: %w", s.path, err)
+	}
+	defer tx.Rollback()
+
+	coverage, err := readCoverage(tx, s.path)
+	if err != nil {
+		return nil, err
+	}
+	gaps, err := readGaps(tx)
+	if err != nil {
+		return nil, err
+	}
+	misses, err := readMisses(tx)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkCoverage(coverage, f, now, gaps, misses); err != nil {
+		return nil, err
+	}
+
+	rows, err := tx.Query(
 		`SELECT t.committed_at, t.server_id,
 		        r.schema_name, r.table_name, r.op, r.log_file, r.log_pos, r.query,
 		        r.columns, r.before, r.after
