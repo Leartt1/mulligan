@@ -94,6 +94,16 @@ func (a *assembler) handle(e *replication.BinlogEvent) (result, error) {
 		return result{}, nil
 
 	case *replication.GTIDEvent:
+		// An anonymous GTID is what a server with gtid_mode off emits before every
+		// transaction, and the library reports it as a GTID whose SID is all zeros.
+		// Rendered, that is one string shared by every transaction on the server —
+		// so taking it as an identifier makes each transaction look like a
+		// re-delivery of the first, and the store's uniqueness constraint discards
+		// the rest without a word. It is the absence of an identifier, not one.
+		if hdr.EventType == replication.ANONYMOUS_GTID_EVENT {
+			return result{}, nil
+		}
+
 		next, err := ev.GTIDNext()
 		if err != nil {
 			return result{}, fmt.Errorf("mysql: reading the GTID at %s:%d: %w", a.logFile, hdr.LogPos, err)

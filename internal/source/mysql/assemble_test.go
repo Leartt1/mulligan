@@ -424,3 +424,56 @@ func TestRowsAreNotCarriedAcrossARollback(t *testing.T) {
 		t.Errorf("transaction carries %d events, want 1 — rows from the rolled back transaction leaked in", n)
 	}
 }
+
+// With gtid_mode off — the default on MySQL 8.0 — every transaction is preceded
+// by an anonymous GTID event, which the library reports as a GTID whose SID is
+// all zeros. Rendered, that is the same string for every transaction on the
+// server.
+//
+// Taken as an identifier it makes every transaction look like a re-delivery of
+// the first, and the store's uniqueness constraint then discards all of them
+// without a word. An anonymous GTID is the absence of an identifier, so the
+// commit position has to stand in.
+func TestAnAnonymousGTIDIsNotUsedAsAnIdentifier(t *testing.T) {
+	anonymous := func(pos uint32) *replication.BinlogEvent {
+		e := event(replication.ANONYMOUS_GTID_EVENT, pos, &replication.GTIDEvent{
+			SID: make([]byte, 16), // all zeros: anonymous
+			GNO: 0,
+		})
+		return e
+	}
+
+	a := newAssembler()
+
+	got := feed(t,
+		a,
+		anonymous(50),
+		event(replication.QUERY_EVENT, 100, &replication.QueryEvent{Query: []byte("BEGIN")}),
+		event(replication.WRITE_ROWS_EVENTv2, 300, rowsEvent()),
+		event(replication.XID_EVENT, 400, &replication.XIDEvent{XID: 1}),
+
+		anonymous(450),
+		event(replication.QUERY_EVENT, 500, &replication.QueryEvent{Query: []byte("BEGIN")}),
+		event(replication.WRITE_ROWS_EVENTv2, 600, rowsEvent()),
+		event(replication.XID_EVENT, 700, &replication.XIDEvent{XID: 2}),
+	)
+
+	if len(got) != 2 {
+		t.Fatalf("got %d transactions, want 2", len(got))
+	}
+	if got[0].SourceID == got[1].SourceID {
+		t.Errorf("both transactions share the identifier %q, so the second would be "+
+			"discarded as a duplicate of the first", got[0].SourceID)
+	}
+	for i, tx := range got {
+		if strings.Contains(tx.SourceID, "00000000-0000-0000-0000-000000000000") {
+			t.Errorf("transaction %d took its identity from an anonymous GTID: %q", i, tx.SourceID)
+		}
+	}
+	if want := "binlog.000004:400"; got[0].SourceID != want {
+		t.Errorf("first source id = %q, want the commit position %q", got[0].SourceID, want)
+	}
+	if want := "binlog.000004:700"; got[1].SourceID != want {
+		t.Errorf("second source id = %q, want the commit position %q", got[1].SourceID, want)
+	}
+}

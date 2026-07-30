@@ -89,6 +89,10 @@ type Source struct {
 	dsn  dsn
 	info Info
 	log  *slog.Logger
+
+	// startFresh ignores the stored resume point on the next attempt, set when the
+	// server has told us it can no longer supply it.
+	startFresh bool
 }
 
 // New prepares a source. It does not connect.
@@ -271,6 +275,27 @@ func (s *Source) Run(ctx context.Context, sink Sink) error {
 			return err
 		}
 
+		// The stored position is gone from the server. Retrying it would loop
+		// forever on a position that will never come back, so the hole is recorded
+		// and collection resumes from wherever the server is now. Without this the
+		// collector never returns, and the store quietly stops at the last thing it
+		// saw while still claiming coverage up to that point.
+		var lost *unresumable
+		if errors.As(err, &lost) {
+			until := time.Now().UTC()
+			if gapErr := sink.RecordGap(lost.from, until,
+				"the collector was down and the source purged the logs covering that period"); gapErr != nil {
+				return gapErr
+			}
+			s.log.Warn("the source can no longer supply the stored resume point; "+
+				"the period since it was recorded is a gap and cannot be reverted",
+				slog.Time("from", lost.from),
+				slog.Time("until", until),
+				slog.Any("error", err))
+			s.startFresh = true
+			continue
+		}
+
 		s.log.Warn("replication connection lost, reattaching",
 			slog.String("source", Redact(s.cfg.DSN)),
 			slog.Duration("after", s.cfg.ReconnectBackoff),
@@ -282,6 +307,32 @@ func (s *Source) Run(ctx context.Context, sink Sink) error {
 		case <-time.After(s.cfg.ReconnectBackoff):
 		}
 	}
+}
+
+// unresumable is the server saying it can no longer supply the position the store
+// last recorded — the binlogs holding it have been purged.
+//
+// Whatever happened between that position and now is gone from the source and was
+// never stored, so nothing can reconstruct it. The only correct response is to
+// record the hole and carry on from wherever the server actually is.
+type unresumable struct {
+	from time.Time
+	err  error
+}
+
+func (u *unresumable) Error() string { return u.err.Error() }
+func (u *unresumable) Unwrap() error { return u.err }
+
+// isUnresumable reports whether err is the server refusing a resume point.
+//
+// Matched on the code rather than the message, which is assembled from a nested
+// error and differs between the two flavors and across versions.
+func isUnresumable(err error) bool {
+	var mye *mysql.MyError
+	if errors.As(err, &mye) {
+		return mye.Code == mysql.ER_MASTER_FATAL_ERROR_READING_BINLOG
+	}
+	return false
 }
 
 // Refusal is an error the collector will not retry: the server is reachable and
@@ -296,6 +347,10 @@ func (s *Source) stream(ctx context.Context, sink Sink) error {
 	cp, err := sink.Checkpoint()
 	if err != nil {
 		return err
+	}
+	if s.startFresh {
+		cp = change.Checkpoint{}
+		s.startFresh = false
 	}
 
 	cfg := replication.BinlogSyncerConfig{
@@ -326,6 +381,9 @@ func (s *Source) stream(ctx context.Context, sink Sink) error {
 
 	streamer, startedAt, err := s.attach(syncer, cp)
 	if err != nil {
+		if !cp.IsZero() && isUnresumable(err) {
+			return &unresumable{from: cp.UpdatedAt, err: err}
+		}
 		return err
 	}
 
@@ -342,6 +400,12 @@ func (s *Source) stream(ctx context.Context, sink Sink) error {
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
+			}
+			if !cp.IsZero() && isUnresumable(err) {
+				// The refusal usually arrives here rather than from the attach: the
+				// library starts reading in the background and surfaces the server's
+				// complaint on the first read.
+				return &unresumable{from: cp.UpdatedAt, err: err}
 			}
 			if errors.Is(err, io.EOF) {
 				return fmt.Errorf("mysql: the server closed the replication stream")
