@@ -30,6 +30,25 @@ type collector struct {
 // startCollector opens a store, binds it to the server, and follows it.
 func startCollector(t *testing.T, s *mysqlServer, storePath string) *collector {
 	t.Helper()
+	return startCollectorWithLog(t, s, storePath, slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+// startCollectorLogging is startCollector with the collector's own log visible,
+// for tests about what it does when something goes wrong.
+func startCollectorLogging(t *testing.T, s *mysqlServer, storePath string) *collector {
+	t.Helper()
+	return startCollectorWithLog(t, s, storePath, slog.New(slog.NewTextHandler(testWriter{t}, nil)))
+}
+
+type testWriter struct{ t *testing.T }
+
+func (w testWriter) Write(p []byte) (int, error) {
+	w.t.Logf("collector: %s", string(p))
+	return len(p), nil
+}
+
+func startCollectorWithLog(t *testing.T, s *mysqlServer, storePath string, log *slog.Logger) *collector {
+	t.Helper()
 
 	src, err := sourcemysql.New(sourcemysql.Config{
 		DSN:      s.dsn(),
@@ -38,7 +57,7 @@ func startCollector(t *testing.T, s *mysqlServer, storePath string) *collector {
 		// Short enough that an idle server keeps coverage moving within a test.
 		HeartbeatPeriod:  time.Second,
 		ReconnectBackoff: 200 * time.Millisecond,
-	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}, log)
 	if err != nil {
 		t.Fatalf("preparing the collector: %v", err)
 	}
