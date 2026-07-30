@@ -211,6 +211,41 @@ func serverIdentity(conn *client.Conn, flavor Flavor, vars map[string]string) (i
 	return "mysql:" + uuid, dialect, nil
 }
 
+// currentPosition asks where the server is writing right now.
+//
+// A collector with no stored checkpoint starts here rather than at the beginning
+// of the oldest retained log. Starting at the beginning would replay whatever
+// history the server still holds — on a fresh container, the whole of its own
+// initialization — and every one of those changes would fall outside the coverage
+// this collector opens, so they could never be answered for anyway.
+//
+// The statement was renamed twice. MySQL 8.0 knows only the oldest spelling,
+// MySQL 8.4 the middle one, MariaDB the newest.
+func (s *Source) currentPosition() (mysql.Position, error) {
+	conn, err := client.Connect(s.dsn.addr, s.dsn.user, s.dsn.password, "")
+	if err != nil {
+		return mysql.Position{}, fmt.Errorf("mysql: connecting to %s: %w", Redact(s.cfg.DSN), err)
+	}
+	defer conn.Close()
+
+	var lastErr error
+	for _, stmt := range []string{"SHOW BINLOG STATUS", "SHOW BINARY LOG STATUS", "SHOW MASTER STATUS"} {
+		r, err := conn.Execute(stmt)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if len(r.Values) == 0 || len(r.Values[0]) < 2 {
+			return mysql.Position{}, fmt.Errorf("mysql: %s reported no position; is binary logging on?", stmt)
+		}
+		return mysql.Position{
+			Name: string(r.Values[0][0].AsString()),
+			Pos:  uint32(r.Values[0][1].AsInt64()),
+		}, nil
+	}
+	return mysql.Position{}, fmt.Errorf("mysql: could not read the current binlog position: %w", lastErr)
+}
+
 // Run follows the server until ctx is cancelled.
 //
 // Reconnection is handled here rather than by the library. Its own retry is
@@ -289,12 +324,12 @@ func (s *Source) stream(ctx context.Context, sink Sink) error {
 	syncer := replication.NewBinlogSyncer(cfg)
 	defer syncer.Close()
 
-	streamer, err := s.attach(syncer, cp)
+	streamer, startedAt, err := s.attach(syncer, cp)
 	if err != nil {
 		return err
 	}
 
-	a := &assembler{logFile: cp.LogFile, flavor: s.info.Flavor}
+	a := &assembler{logFile: startedAt.Name, flavor: s.info.Flavor}
 	resumed := !cp.IsZero()
 	var pendingGap *change.Checkpoint
 	if resumed {
@@ -362,26 +397,36 @@ func (s *Source) stream(ctx context.Context, sink Sink) error {
 
 // attach starts the stream from where the sink says we left off, preferring a
 // GTID because a position is only meaningful on the server that issued it.
-func (s *Source) attach(syncer *replication.BinlogSyncer, cp change.Checkpoint) (*replication.BinlogStreamer, error) {
+func (s *Source) attach(syncer *replication.BinlogSyncer, cp change.Checkpoint) (*replication.BinlogStreamer, mysql.Position, error) {
 	if cp.GTID != "" && s.info.GTIDDialect != "" {
 		set, err := mysql.ParseGTIDSet(s.info.GTIDDialect, cp.GTID)
 		if err != nil {
-			return nil, fmt.Errorf("mysql: the stored resume point %q is not a %s GTID set: %w",
+			return nil, mysql.Position{}, fmt.Errorf("mysql: the stored resume point %q is not a %s GTID set: %w",
 				cp.GTID, s.info.GTIDDialect, err)
 		}
 		streamer, err := syncer.StartSyncGTID(set)
 		if err != nil {
-			return nil, fmt.Errorf("mysql: resuming from the stored GTID set: %w", err)
+			return nil, mysql.Position{}, fmt.Errorf("mysql: resuming from the stored GTID set: %w", err)
 		}
-		return streamer, nil
+		return streamer, mysql.Position{Name: cp.LogFile, Pos: cp.LogPos}, nil
 	}
 
 	pos := mysql.Position{Name: cp.LogFile, Pos: cp.LogPos}
+	if cp.IsZero() {
+		// Nothing collected yet: begin where the server is writing now, matching the
+		// coverage this collector is about to open.
+		current, err := s.currentPosition()
+		if err != nil {
+			return nil, mysql.Position{}, err
+		}
+		pos = current
+	}
+
 	streamer, err := syncer.StartSync(pos)
 	if err != nil {
-		return nil, fmt.Errorf("mysql: resuming from %s:%d: %w", cp.LogFile, cp.LogPos, err)
+		return nil, mysql.Position{}, fmt.Errorf("mysql: resuming from %s:%d: %w", pos.Name, pos.Pos, err)
 	}
-	return streamer, nil
+	return streamer, pos, nil
 }
 
 // gsetOf reads the executed GTID set the library stamps onto a commit event.

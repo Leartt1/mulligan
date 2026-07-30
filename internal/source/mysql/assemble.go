@@ -21,6 +21,10 @@ type assembler struct {
 	logFile string
 	flavor  Flavor
 
+	// now supplies the clock for events that carry no timestamp of their own.
+	// Overridden in tests.
+	now func() time.Time
+
 	// gtid is the identifier of the transaction currently being assembled, when
 	// the server issues them.
 	gtid string
@@ -32,6 +36,13 @@ type assembler struct {
 	events []change.Event
 	at     time.Time
 	server uint32
+}
+
+func (a *assembler) clock() time.Time {
+	if a.now != nil {
+		return a.now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 // missed is one change seen but not interpretable.
@@ -55,7 +66,17 @@ type result struct {
 // connection looks healthy.
 func (a *assembler) handle(e *replication.BinlogEvent) (result, error) {
 	hdr := e.Header
+
+	// A heartbeat, and the artificial rotate a stream opens with, carry timestamp
+	// zero: they describe the connection rather than a moment in the database. They
+	// still have to move coverage, because their whole purpose is to say the
+	// collector is attached and current — so they are stamped with the clock
+	// instead. Reading them as 1970 would leave an idle server looking like a
+	// collector that had stopped.
 	when := time.Unix(int64(hdr.Timestamp), 0).UTC()
+	if hdr.Timestamp == 0 {
+		when = a.clock()
+	}
 
 	switch ev := e.Event.(type) {
 	case *replication.RotateEvent:

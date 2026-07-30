@@ -332,12 +332,22 @@ func TestARotateChangesTheLogFileTheAssemblerReports(t *testing.T) {
 func TestAHeartbeatAdvancesCoverage(t *testing.T) {
 	a := newAssembler()
 
-	res, err := a.handle(event(replication.HEARTBEAT_EVENT, 0, &replication.GenericEvent{}))
+	// A real heartbeat carries timestamp zero: it describes the connection, not a
+	// moment in the database. Read literally that is 1970, and a forward-only
+	// coverage mark would ignore it.
+	hb := event(replication.HEARTBEAT_EVENT, 0, &replication.HeartbeatEvent{Version: 2})
+	hb.Header.Timestamp = 0
+
+	res, err := a.handle(hb)
 	if err != nil {
 		t.Fatalf("heartbeat returned error: %v", err)
 	}
 	if res.advance.IsZero() {
-		t.Error("a heartbeat did not advance coverage")
+		t.Fatal("a heartbeat did not advance coverage")
+	}
+	if res.advance.Year() < 2000 {
+		t.Errorf("a heartbeat advanced coverage to %s, which is before anything was collected; "+
+			"an idle server would look like a stopped collector", res.advance)
 	}
 }
 

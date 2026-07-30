@@ -58,6 +58,9 @@ func startServer(t *testing.T, fl flavor) *mysqlServer {
 	cmd := exec.Command("docker", "run", "--detach", "--rm",
 		"--env", "MYSQL_ROOT_PASSWORD="+rootPass,
 		"--env", "MARIADB_ROOT_PASSWORD="+rootPass,
+		// Publish on an ephemeral host port: the collector connects as a replica
+		// over TCP from the test process, not through docker exec.
+		"--publish", "0:3306",
 		fl.image,
 		"--log-bin=binlog",
 		"--server-id=1",
@@ -253,4 +256,27 @@ func requireDocker(t *testing.T) {
 	if err := exec.Command("docker", "info").Run(); err != nil {
 		t.Skip("skipping acceptance test: docker is not available")
 	}
+}
+
+// hostAddr is where the collector reaches this server from the test process.
+func (s *mysqlServer) hostAddr() string {
+	s.t.Helper()
+
+	out, err := exec.Command("docker", "port", s.container, "3306/tcp").Output()
+	if err != nil {
+		s.t.Fatalf("asking docker for the published port: %v", err)
+	}
+
+	// docker prints one mapping per line, e.g. "0.0.0.0:55001".
+	line, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+	_, port, ok := strings.Cut(line, ":")
+	if !ok {
+		s.t.Fatalf("could not read a port out of %q", line)
+	}
+	return "127.0.0.1:" + port
+}
+
+// dsn is the connection string a collector would be given for this server.
+func (s *mysqlServer) dsn() string {
+	return "root:" + rootPass + "@tcp(" + s.hostAddr() + ")/"
 }
