@@ -40,6 +40,13 @@ type Config struct {
 	// ReconnectBackoff is how long to wait before re-attaching after the
 	// connection drops.
 	ReconnectBackoff time.Duration
+
+	// Collect narrows what is stored. The zero value collects everything, which is
+	// the widest possible copy of the source and rarely what anyone wants for
+	// long: the store holds full row images, so it is a partial replica of every
+	// table it follows. Time bounds are ignored here — a collector follows the log
+	// as it arrives — so only the table list applies.
+	Collect change.Filter
 }
 
 // DefaultHeartbeatPeriod keeps coverage moving on an idle server well inside the
@@ -69,6 +76,13 @@ type Info struct {
 	// DecodeFingerprint identifies the decoding contract rows will be captured
 	// under.
 	DecodeFingerprint string
+
+	// Generated names the columns the server computes for itself, keyed by
+	// "schema.table". Assigning to one is an error, and the log carries no flag
+	// saying which they are, so a live connection is the only place this can be
+	// learned. Empty when the catalogue could not be read, which is not fatal:
+	// they can still be named by hand.
+	Generated map[string][]string
 }
 
 // Sink is where a collector puts what it reads.
@@ -151,12 +165,21 @@ func (s *Source) Preflight(ctx context.Context) (Info, error) {
 		return Info{}, err
 	}
 
+	// Not fatal: a reversal that assigns to a generated column fails loudly with
+	// ERROR 3105, and the columns can still be named by hand.
+	generated, err := generatedColumns(conn)
+	if err != nil {
+		s.log.Warn("could not read which columns the server generates; "+
+			"name them with -generated if a revert fails on ERROR 3105", slog.Any("error", err))
+	}
+
 	s.info = Info{
 		Flavor:            flavor,
 		ServerIdentity:    identity,
 		GTIDDialect:       dialect,
 		StatementCapture:  statementCapture(flavor, vars),
 		DecodeFingerprint: s.cfg.Decode.Fingerprint(),
+		Generated:         generated,
 	}
 	return s.info, nil
 }
@@ -439,6 +462,18 @@ func (s *Source) stream(ctx context.Context, sink Sink) error {
 		}
 
 		if res.txn != nil {
+			// Drop rows for tables nobody asked for before they reach the store.
+			// Filtering at generate time instead would mean collecting them first,
+			// and the store is an unencrypted copy of whatever it collects.
+			res.txn.Events = s.wanted(res.txn.Events)
+			s.markGenerated(res.txn.Events)
+			if len(res.txn.Events) == 0 {
+				if err := sink.AdvanceCoverage(res.txn.CommittedAt); err != nil {
+					return err
+				}
+				continue
+			}
+
 			next := change.Checkpoint{
 				LogFile:   a.logFile,
 				LogPos:    e.Header.LogPos,
@@ -539,4 +574,44 @@ func portOf(addr string) uint16 {
 		}
 	}
 	return 3306
+}
+
+// wanted keeps the events the collector was asked to store.
+//
+// A schema change is always kept: it is context for every table in the window,
+// and which table a DDL statement names cannot be known without parsing SQL.
+func (s *Source) wanted(events []change.Event) []change.Event {
+	if len(s.cfg.Collect.Tables) == 0 {
+		return events
+	}
+
+	kept := events[:0]
+	for _, ev := range events {
+		if ev.IsSchemaChange() || s.cfg.Collect.Match(ev) {
+			kept = append(kept, ev)
+		}
+	}
+	return kept
+}
+
+// markGenerated flags the columns the server computes for itself, so a reversal
+// reads them and never assigns to one.
+//
+// This is what the file path cannot do: the log records a generated column's
+// value like any other and nothing to say it is computed, so reading a binlog
+// alone leaves them to be named by hand.
+func (s *Source) markGenerated(events []change.Event) {
+	if len(s.info.Generated) == 0 {
+		return
+	}
+
+	for i := range events {
+		for _, name := range s.info.Generated[events[i].Schema+"."+events[i].Table] {
+			for c := range events[i].Columns {
+				if strings.EqualFold(events[i].Columns[c].Name, name) {
+					events[i].Columns[c].ReadOnly = true
+				}
+			}
+		}
+	}
 }

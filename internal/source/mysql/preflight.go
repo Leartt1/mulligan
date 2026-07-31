@@ -8,6 +8,8 @@ package mysql
 import (
 	"fmt"
 	"strings"
+
+	"github.com/go-mysql-org/go-mysql/client"
 )
 
 // Flavor is which of the two servers is on the other end. They diverge enough —
@@ -100,4 +102,41 @@ func flavorFromVersion(version string) Flavor {
 		return FlavorMariaDB
 	}
 	return FlavorMySQL
+}
+
+// generatedColumns asks the server which columns it computes for itself.
+//
+// The binary log records a generated column's computed value like any other and
+// records nothing to say it is computed, so a reversal that assigns to one fails
+// with ERROR 3105. Reading the catalogue is the only way to know, and a live
+// connection is the one place Mulligan has that is not available when reading a
+// file — which is why the file path still needs them named by hand.
+//
+// The answer describes the schema now, not as it was when a change was logged.
+// That is the right trade: a column generated today cannot be assigned today,
+// whatever it was when the row changed.
+func generatedColumns(conn *client.Conn) (map[string][]string, error) {
+	// EXTRA carries "STORED GENERATED" or "VIRTUAL GENERATED" on both flavors.
+	// MariaDB also has IS_GENERATED; MySQL does not, and naming it makes the whole
+	// query fail — which is how the first version of this silently learned nothing
+	// and left every generated column unmarked.
+	r, err := conn.Execute(`
+		SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME
+		  FROM information_schema.COLUMNS
+		 WHERE EXTRA LIKE '%GENERATED%'`)
+	if err != nil {
+		// Not fatal. Generated columns can still be named by hand, and refusing to
+		// collect because a catalogue query failed would be out of proportion.
+		return nil, fmt.Errorf("mysql: asking which columns are generated: %w", err)
+	}
+
+	out := make(map[string][]string)
+	for _, row := range r.Values {
+		if len(row) < 3 {
+			continue
+		}
+		table := string(row[0].AsString()) + "." + string(row[1].AsString())
+		out[table] = append(out[table], string(row[2].AsString()))
+	}
+	return out, nil
 }

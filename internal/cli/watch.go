@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/learttytyri/mulligan/internal/binlog"
+	"github.com/learttytyri/mulligan/internal/change"
 	sourcemysql "github.com/learttytyri/mulligan/internal/source/mysql"
 	"github.com/learttytyri/mulligan/internal/store"
 )
@@ -34,6 +35,7 @@ func watch(args []string, stdout, stderr io.Writer) int {
 		storePath = fs.String("store", "", "window store to write (required)")
 		serverID  = fs.Uint("server-id", 0, "replication server id, unique in the topology (required)")
 		dsnFlag   = fs.String("dsn", "", "connection string; prefer "+dsnEnv)
+		tables    = fs.String("tables", "", `comma-separated tables to collect, as "table" or "schema.table"; empty collects everything`)
 		retain    = fs.String("retain", store.DefaultRetention.String(), "how far back to keep changes")
 		stale     = fs.String("max-staleness", store.DefaultMaxStaleness.String(),
 			"how far behind this collector may fall before generate refuses to answer")
@@ -77,10 +79,13 @@ func watch(args []string, stdout, stderr io.Writer) int {
 
 	log := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
+	collect := change.Filter{Tables: splitList(*tables)}
+
 	src, err := sourcemysql.New(sourcemysql.Config{
 		DSN:      dsn,
 		ServerID: uint32(*serverID),
 		Decode:   binlog.DefaultDecodeOptions(),
+		Collect:  collect,
 	}, log)
 	if err != nil {
 		fmt.Fprintf(stderr, "mulligan watch: %v\n", err)
@@ -104,6 +109,21 @@ func watch(args []string, stdout, stderr io.Writer) int {
 		return exitFailure
 	}
 	defer db.Close()
+
+	// One collector per store. Two writing to one interleave their transactions
+	// into a single order that reflects neither source — a file that reads
+	// perfectly well and produces a revert applying changes in an order that never
+	// happened.
+	if err := db.Claim(); err != nil {
+		fmt.Fprintf(stderr, "mulligan watch: %v\n", err)
+		return exitFailure
+	}
+	defer db.Release()
+
+	if db.LockUnsupported() {
+		log.Warn("this platform offers no advisory lock, so a second collector " +
+			"following the same store cannot be detected; run only one")
+	}
 
 	// Binding refuses a store captured from a different server, a different
 	// flavor, or under a different decoding contract. Resumed against another
@@ -136,7 +156,13 @@ func watch(args []string, stdout, stderr io.Writer) int {
 		slog.String("flavor", string(info.Flavor)),
 		slog.String("store", *storePath),
 		slog.Duration("retain", retention),
+		slog.Any("tables", collect.Tables),
 		slog.Bool("statement_capture", info.StatementCapture))
+
+	if len(collect.Tables) == 0 {
+		log.Warn("no -tables given, so every table on the server is collected, " +
+			"including any holding personal data; the store is an unencrypted copy of them")
+	}
 
 	if !info.StatementCapture {
 		log.Warn("the source does not log which statement caused a change, " +

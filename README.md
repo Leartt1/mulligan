@@ -51,8 +51,18 @@ end-to-end tests as MySQL.
 
 ```console
 $ export MULLIGAN_DSN='repl:secret@tcp(db.internal:3306)/'
-$ mulligan watch -store mulligan.db -server-id 1001 -retain 168h
+$ mulligan watch -store mulligan.db -server-id 1001 -retain 168h \
+    -tables shop.orders,shop.order_items
 ```
+
+**Name the tables you care about.** Without `-tables` the collector follows every
+table on the server, and the store holds full row images — so it becomes an
+unencrypted partial copy of everything, including whatever holds personal data.
+Collecting less is a data-protection measure, not an optimisation.
+
+Only one collector may follow a store at a time; a second is refused. Two writing
+to one would interleave their transactions into an order that reflects neither
+server.
 
 `-server-id` has no default on purpose: it must be unique across your
 replication topology, because a collision disconnects whichever replica claimed
@@ -116,17 +126,20 @@ Nothing is executed. Mulligan proposes; you review, then you run it.
 
 ### Generated columns
 
-If your table has a generated column, name it:
+MySQL writes a generated column's computed value into the log like any other
+column, and records nothing to say it is computed — but assigning to one is an
+error, so a revert that does fails on `ERROR 3105`.
+
+`watch` handles this for you: it has a live connection and asks the server which
+columns it computes. Reading a **binlog file** has no such connection, so name
+them there:
 
 ```console
 $ mulligan generate -binlog binlog.000004 -generated invoices.tax,invoices.gross
 ```
 
-MySQL writes a generated column's computed value into the log like any other
-column, but records nothing to say it is computed — and assigning to one is an
-error. Without this flag the script fails on `ERROR 3105`. Named columns are read
-but never assigned; restoring the columns they derive from is what brings them
-back.
+Named columns are read but never assigned; restoring the columns they derive from
+is what brings them back.
 
 ## What it will and won't do
 

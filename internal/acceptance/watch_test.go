@@ -30,14 +30,20 @@ type collector struct {
 // startCollector opens a store, binds it to the server, and follows it.
 func startCollector(t *testing.T, s *mysqlServer, storePath string) *collector {
 	t.Helper()
-	return startCollectorWithLog(t, s, storePath, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return startCollectorWithLog(t, s, storePath, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+}
+
+// startCollectorForTables follows only the named tables.
+func startCollectorForTables(t *testing.T, s *mysqlServer, storePath string, tables []string) *collector {
+	t.Helper()
+	return startCollectorWithLog(t, s, storePath, slog.New(slog.NewTextHandler(io.Discard, nil)), tables)
 }
 
 // startCollectorLogging is startCollector with the collector's own log visible,
 // for tests about what it does when something goes wrong.
 func startCollectorLogging(t *testing.T, s *mysqlServer, storePath string) *collector {
 	t.Helper()
-	return startCollectorWithLog(t, s, storePath, slog.New(slog.NewTextHandler(testWriter{t}, nil)))
+	return startCollectorWithLog(t, s, storePath, slog.New(slog.NewTextHandler(testWriter{t}, nil)), nil)
 }
 
 type testWriter struct{ t *testing.T }
@@ -47,7 +53,7 @@ func (w testWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func startCollectorWithLog(t *testing.T, s *mysqlServer, storePath string, log *slog.Logger) *collector {
+func startCollectorWithLog(t *testing.T, s *mysqlServer, storePath string, log *slog.Logger, tables []string) *collector {
 	t.Helper()
 
 	src, err := sourcemysql.New(sourcemysql.Config{
@@ -57,6 +63,7 @@ func startCollectorWithLog(t *testing.T, s *mysqlServer, storePath string, log *
 		// Short enough that an idle server keeps coverage moving within a test.
 		HeartbeatPeriod:  time.Second,
 		ReconnectBackoff: 200 * time.Millisecond,
+		Collect:          change.Filter{Tables: tables},
 	}, log)
 	if err != nil {
 		t.Fatalf("preparing the collector: %v", err)
@@ -392,5 +399,96 @@ func TestAnIdleServerKeepsCoverageMoving(t *testing.T) {
 	if !second.To.After(first.To) {
 		t.Errorf("coverage did not move while the server was idle (%s then %s); "+
 			"a quiet database would look like a stopped collector", first.To, second.To)
+	}
+}
+
+// The log records a generated column's computed value like any other and nothing
+// to say it is computed, so a reversal that assigns to one fails with ERROR
+// 3105. Reading a binlog file, the only fix is naming them by hand. A collector
+// has a live connection and can ask the catalogue, so it should not have to.
+func TestWatchMarksGeneratedColumnsWithoutBeingTold(t *testing.T) {
+	s := startMySQL(t)
+
+	s.exec("CREATE DATABASE shop")
+	s.exec(`CREATE TABLE shop.invoices (
+		id    INT PRIMARY KEY,
+		net   DECIMAL(10,2) NOT NULL,
+		rate  DECIMAL(4,3)  NOT NULL,
+		tax   DECIMAL(10,2) AS (net * rate) STORED,
+		gross DECIMAL(10,2) AS (net + net * rate) VIRTUAL
+	)`)
+	s.exec("INSERT INTO shop.invoices (id, net, rate) VALUES (1, 100.00, 0.200)")
+
+	c := startCollector(t, s, filepath.Join(t.TempDir(), "mulligan.db"))
+
+	const snap = `SELECT id, net, rate, tax, gross FROM shop.invoices ORDER BY id`
+	before := s.query(snap)
+
+	s.exec("UPDATE shop.invoices SET net = 999.00 WHERE id = 1")
+
+	events := c.waitForEvents(t, 1)
+
+	// No -generated flag anywhere: the collector asked the server.
+	plan, err := reverse.Plan(events)
+	if err != nil {
+		t.Fatalf("generating the reversal: %v", err)
+	}
+	var script strings.Builder
+	if err := cli.Render(&script, "mulligan.db", change.Filter{}, nil, plan); err != nil {
+		t.Fatalf("rendering: %v", err)
+	}
+	t.Logf("generated script:\n%s", script.String())
+
+	for _, computed := range []string{"`tax`", "`gross`"} {
+		if strings.Contains(script.String(), "SET "+computed) || strings.Contains(script.String(), ", "+computed+" =") {
+			t.Errorf("the script assigns to the generated column %s, which is an error the server refuses:\n%s",
+				computed, script.String())
+		}
+	}
+
+	s.applyScript(script.String())
+
+	if restored := s.query(snap); !reflect.DeepEqual(restored, before) {
+		t.Errorf("rows were not restored\n got: %q\nwant: %q", restored, before)
+	}
+}
+
+// A collector told which tables to follow must not fill the store with the rest.
+// The store holds full row images, so anything collected is an unencrypted copy
+// of it — collecting less is a data-protection measure, not an optimisation.
+func TestWatchCollectsOnlyTheTablesItWasGiven(t *testing.T) {
+	s := startMySQL(t)
+
+	s.exec("CREATE DATABASE shop")
+	s.exec(schema)
+	s.exec(`CREATE TABLE shop.people (id INT PRIMARY KEY, email VARCHAR(64))`)
+	s.exec(seed)
+
+	c := startCollectorForTables(t, s, filepath.Join(t.TempDir(), "mulligan.db"), []string{"shop.orders"})
+
+	s.exec("UPDATE shop.orders SET status = 'shipped' WHERE id = 1")
+	s.exec("INSERT INTO shop.people VALUES (1, 'ada@example.com')")
+	s.exec("UPDATE shop.orders SET status = 'shipped' WHERE id = 2")
+
+	events := c.waitForEvents(t, 2)
+
+	for _, ev := range events {
+		if ev.Table == "people" {
+			t.Errorf("a table the collector was not asked for was stored: %s.%s", ev.Schema, ev.Table)
+		}
+	}
+
+	var sawEmail bool
+	for _, ev := range events {
+		for _, row := range [][]any{ev.Before, ev.After} {
+			for _, v := range row {
+				if str, ok := v.(string); ok && strings.Contains(str, "@example.com") {
+					sawEmail = true
+				}
+			}
+		}
+	}
+	if sawEmail {
+		t.Error("personal data from an uncollected table reached the store")
 	}
 }

@@ -65,6 +65,10 @@ Watch flags:
   -dsn DSN             connection string; prefer the MULLIGAN_DSN environment
                        variable, since an argument is visible in ps output to
                        every user on the host
+  -tables LIST         comma-separated tables to collect, as "table" or
+                       "schema.table". Empty collects every table on the server,
+                       and the store holds full row images — so it becomes an
+                       unencrypted copy of them.
   -retain DURATION     how far back to keep changes (default 168h)
   -max-staleness DUR   how far behind the collector may fall before generate
                        refuses to answer (default 5m)
@@ -82,7 +86,8 @@ Generate flags:
   -store FILE     read changes from a window store instead of binlog files
   -generated LIST generated columns, as "column" or "table.column". The log
                   records their values but not the fact that they are computed,
-                  and assigning to one is an error, so they must be named here.
+                  and assigning to one is an error. Only needed when reading
+                  binlog files: watch asks the server instead.
                   Symptom of a missing name: ERROR 3105 when the script is run.
 
 Times accept a bare "15:04" — meaning its most recent occurrence — as well as

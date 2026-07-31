@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 
 	_ "modernc.org/sqlite" // pure-Go driver, so the binary stays static
@@ -21,6 +22,11 @@ const SchemaVersion = 1
 type Store struct {
 	db   *sql.DB
 	path string
+
+	// lockFile holds the collector's exclusive claim on this store, when one has
+	// been taken. See Claim.
+	lockFile        *os.File
+	lockUnsupported bool
 }
 
 // Binding is the source a store was captured from.

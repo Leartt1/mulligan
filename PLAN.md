@@ -226,11 +226,12 @@ Deferred from v0.2, in rough order of how much they would cost to hit:
   collector. That needs `watch` as a subprocess.
 - **Store format evolution** — `schema_version` and `codec_version` exist and a
   newer store is refused; no migration path does.
-- **No table filter on `watch`**, so it collects every table on the server,
-  including any holding personal data. Retention is currently the only bound on
-  how long that copy lives.
-- **Nothing enforces a single collector per store.** Two would interleave into an
-  order that means nothing.
+- ~~No table filter on `watch`.~~ **Done:** `-tables` narrows what is collected,
+  and running without it warns that the store becomes an unencrypted copy of
+  every table.
+- ~~Nothing enforces a single collector per store.~~ **Done:** an advisory lock
+  beside the store, released by the kernel however the process ends — so a
+  restart after a crash never waits on a lock nobody holds.
 - **`generate` materializes the whole matching window in memory**, which is an OOM
   at exactly the wrong moment.
 - **Backpressure** — a source purging binlogs faster than the collector reads them
