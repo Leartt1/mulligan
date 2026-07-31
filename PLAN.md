@@ -213,8 +213,14 @@ Toward **v0.3 (API + web console)**:
 
 Deferred from v0.2, in rough order of how much they would cost to hit:
 
-- **DDL drift** — a revert spanning `ALTER TABLE`. Still unverified, still the
-  largest unknown, and it may affect shipped v0.1 as much as v0.2.
+- ~~DDL drift — a revert spanning `ALTER TABLE`.~~ **Measured** in
+  `internal/acceptance`, and it behaves better than feared: a column added
+  afterwards is harmless, and dropped, renamed or narrowed columns all fail
+  loudly when the script runs. Exactly one case is silent — a **retyped** column
+  restores a value coerced into the new type with no error — so schema changes
+  are now carried through both the file and streaming paths and reported as a
+  warning in the script. Mulligan still cannot reverse DDL and does not claim to;
+  what changed is that it no longer stays quiet about it.
 - **Kill-mid-transaction is untested.** The atomicity is designed for and covered
   by a unit test for the rejected-transaction case, but no test SIGKILLs a running
   collector. That needs `watch` as a subprocess.

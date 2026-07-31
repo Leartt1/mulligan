@@ -31,7 +31,7 @@ func TestRenderWritesEachStatementUnderItsProvenance(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := Render(&out, "binlog.000004", change.Filter{}, plan); err != nil {
+	if err := Render(&out, "binlog.000004", change.Filter{}, nil, plan); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 	got := out.String()
@@ -54,7 +54,7 @@ func TestRenderWarnsThatNothingHasBeenExecuted(t *testing.T) {
 	plan := []reverse.Reversal{reversal(change.Delete, "orders", 100, "INSERT INTO `shop`.`orders` (`id`) VALUES (7);")}
 
 	var out strings.Builder
-	if err := Render(&out, "binlog.000004", change.Filter{}, plan); err != nil {
+	if err := Render(&out, "binlog.000004", change.Filter{}, nil, plan); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 
@@ -73,7 +73,7 @@ func TestRenderPinsSessionTimeZoneAndCharsetBeforeAnyStatement(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := Render(&out, "binlog.000004", change.Filter{}, plan); err != nil {
+	if err := Render(&out, "binlog.000004", change.Filter{}, nil, plan); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 	got := out.String()
@@ -94,7 +94,7 @@ func TestRenderPinsSessionTimeZoneAndCharsetBeforeAnyStatement(t *testing.T) {
 // look like a script that happens to do nothing.
 func TestRenderSaysSoWhenNothingMatched(t *testing.T) {
 	var out strings.Builder
-	if err := Render(&out, "binlog.000004", change.Filter{}, nil); err != nil {
+	if err := Render(&out, "binlog.000004", change.Filter{}, nil, nil); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 	got := out.String()
@@ -114,7 +114,7 @@ func TestRenderCountsTheStatements(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := Render(&out, "binlog.000004", change.Filter{}, plan); err != nil {
+	if err := Render(&out, "binlog.000004", change.Filter{}, nil, plan); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 
@@ -132,7 +132,7 @@ func TestRenderPreservesPlanOrder(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := Render(&out, "binlog.000004", change.Filter{}, plan); err != nil {
+	if err := Render(&out, "binlog.000004", change.Filter{}, nil, plan); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 	got := out.String()
@@ -308,7 +308,7 @@ func TestRenderKeepsATableNameWithANewlineOnOneCommentLine(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := Render(&out, "binlog.000004", change.Filter{}, plan); err != nil {
+	if err := Render(&out, "binlog.000004", change.Filter{}, nil, plan); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 	got := out.String()
@@ -331,7 +331,7 @@ func TestRenderShowsTheStatementThatCausedTheChange(t *testing.T) {
 	plan := []reverse.Reversal{r}
 
 	var out strings.Builder
-	if err := Render(&out, "binlog.000004", change.Filter{}, plan); err != nil {
+	if err := Render(&out, "binlog.000004", change.Filter{}, nil, plan); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 	got := out.String()
@@ -351,7 +351,7 @@ func TestRenderOmitsCausedByLineWhenTheEventCarriesNoQuery(t *testing.T) {
 	withoutQuery := reversal(change.Insert, "orders", 800, "DELETE FROM `shop`.`orders` WHERE `id` = 9 LIMIT 1;")
 
 	var out strings.Builder
-	if err := Render(&out, "binlog.000004", change.Filter{}, []reverse.Reversal{withQuery, withoutQuery}); err != nil {
+	if err := Render(&out, "binlog.000004", change.Filter{}, nil, []reverse.Reversal{withQuery, withoutQuery}); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 	got := out.String()
@@ -412,7 +412,7 @@ func TestRenderEmitsOnlyCommentsBlanksAndPlannedStatements(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := Render(&out, "binlog.000004\nDROP TABLE `shop`.`customers`;", change.Filter{}, hostile); err != nil {
+	if err := Render(&out, "binlog.000004\nDROP TABLE `shop`.`customers`;", change.Filter{}, nil, hostile); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 	got := out.String()
@@ -461,7 +461,7 @@ func TestRenderDoesNotLetHostileTextForgeACommentLine(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := Render(&out, "binlog.000004", change.Filter{}, plan); err != nil {
+	if err := Render(&out, "binlog.000004", change.Filter{}, nil, plan); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 	got := out.String()
@@ -535,7 +535,7 @@ func TestRenderStatesTheWindowItWasAskedFor(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := Render(&out, "mulligan.db", window, plan); err != nil {
+	if err := Render(&out, "mulligan.db", window, nil, plan); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 	got := out.String()
@@ -553,7 +553,7 @@ func TestRenderStatesAHalfBoundedWindow(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := Render(&out, "mulligan.db", change.Filter{From: time.Date(2026, 7, 30, 13, 5, 0, 0, time.UTC)}, plan); err != nil {
+	if err := Render(&out, "mulligan.db", change.Filter{From: time.Date(2026, 7, 30, 13, 5, 0, 0, time.UTC)}, nil, plan); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 	if got := out.String(); !strings.Contains(got, "from 2026-07-30 13:05:00 UTC") {
@@ -569,10 +569,101 @@ func TestRenderSaysNothingAboutAnUnboundedWindow(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := Render(&out, "mulligan.db", change.Filter{}, plan); err != nil {
+	if err := Render(&out, "mulligan.db", change.Filter{}, nil, plan); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 	if got := out.String(); strings.Contains(got, "window:") {
 		t.Errorf("an unbounded run claimed a window:\n%s", got)
+	}
+}
+
+// A revert is built from each table as it was when the change happened. If the
+// schema moved since, the script describes a shape the table may no longer have.
+// Dropped, renamed and narrowed columns make the script fail loudly; a retyped
+// one restores a converted value with no error at all — measured in
+// internal/acceptance — and that silent case is what this warning exists for.
+func TestRenderWarnsWhenTheWindowSpansASchemaChange(t *testing.T) {
+	plan := []reverse.Reversal{
+		reversal(change.Update, "orders", 4242, "UPDATE `shop`.`orders` SET `status` = 'pending' WHERE `id` = 7 LIMIT 1;"),
+	}
+	ddl := []change.Event{{
+		Schema:  "shop",
+		Op:      change.SchemaChange,
+		Query:   "ALTER TABLE orders MODIFY COLUMN amount VARCHAR(16)",
+		LogFile: "binlog.000004",
+		LogPos:  900,
+		At:      time.Date(2026, 7, 27, 12, 5, 0, 0, time.UTC),
+	}}
+
+	var out strings.Builder
+	if err := Render(&out, "binlog.000004", change.Filter{}, ddl, plan); err != nil {
+		t.Fatalf("Render returned error: %v", err)
+	}
+	got := out.String()
+
+	for _, want := range []string{
+		"WARNING",
+		"ALTER TABLE orders MODIFY COLUMN amount VARCHAR(16)",
+		"binlog.000004:900",
+		"retyped",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the warning does not mention %q:\n%s", want, got)
+		}
+	}
+
+	// The reversal itself still has to be there: a schema change is a caution, not
+	// a refusal, and the row changes around it remain reversible.
+	if !strings.Contains(got, "UPDATE `shop`.`orders` SET") {
+		t.Errorf("the reversal was dropped along with the warning:\n%s", got)
+	}
+}
+
+// Most windows contain no DDL, and a warning on every script would be noise that
+// buries the ones that matter.
+func TestRenderSaysNothingAboutSchemaWhenNoneChanged(t *testing.T) {
+	plan := []reverse.Reversal{
+		reversal(change.Update, "orders", 4242, "UPDATE `shop`.`orders` SET `status` = 'x' WHERE `id` = 7 LIMIT 1;"),
+	}
+
+	var out strings.Builder
+	if err := Render(&out, "binlog.000004", change.Filter{}, nil, plan); err != nil {
+		t.Fatalf("Render returned error: %v", err)
+	}
+	if got := out.String(); strings.Contains(got, "WARNING") {
+		t.Errorf("a script with no schema change carries a warning:\n%s", got)
+	}
+}
+
+// A schema change is never rendered as SQL, and every line of the script still
+// has to be a comment, a blank, a session pin or a planned statement.
+func TestASchemaChangeNeverBecomesAStatement(t *testing.T) {
+	ddl := []change.Event{{
+		Schema:  "shop",
+		Op:      change.SchemaChange,
+		Query:   "DROP TABLE customers",
+		LogFile: "binlog.000004",
+		LogPos:  900,
+		At:      time.Date(2026, 7, 27, 12, 5, 0, 0, time.UTC),
+	}}
+	stmt := "UPDATE `shop`.`orders` SET `status` = 'x' WHERE `id` = 7 LIMIT 1;"
+
+	var out strings.Builder
+	if err := Render(&out, "binlog.000004", change.Filter{}, ddl, []reverse.Reversal{
+		reversal(change.Update, "orders", 4242, stmt),
+	}); err != nil {
+		t.Fatalf("Render returned error: %v", err)
+	}
+
+	allowed := map[string]bool{
+		"SET time_zone = '+00:00';": true,
+		"SET NAMES utf8mb4;":        true,
+		stmt:                        true,
+	}
+	for i, line := range strings.Split(out.String(), "\n") {
+		if line == "" || strings.HasPrefix(line, "--") || allowed[line] {
+			continue
+		}
+		t.Errorf("line %d is executable and was not planned: %q", i+1, line)
 	}
 }

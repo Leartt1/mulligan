@@ -162,9 +162,13 @@ func generate(args []string, stdout, stderr io.Writer) int {
 		return exitFailure
 	}
 
-	change.MarkReadOnly(events, splitList(*generated))
+	// Schema changes are carried alongside the row changes so the script can warn
+	// about them; they are never reversed.
+	rowChanges, schemaChanges := splitSchemaChanges(events)
 
-	plan, err := reverse.Plan(events)
+	change.MarkReadOnly(rowChanges, splitList(*generated))
+
+	plan, err := reverse.Plan(rowChanges)
 	if err != nil {
 		fmt.Fprintf(stderr, "mulligan generate: %v\n", err)
 		return exitFailure
@@ -174,7 +178,7 @@ func generate(args []string, stdout, stderr io.Writer) int {
 	// from a complete one, and the whole point is that a human trusts what they
 	// review.
 	var script bytes.Buffer
-	if err := Render(&script, label, filter, plan); err != nil {
+	if err := Render(&script, label, filter, schemaChanges, plan); err != nil {
 		fmt.Fprintf(stderr, "mulligan generate: %v\n", err)
 		return exitFailure
 	}
@@ -284,4 +288,20 @@ func eventsFromFiles(files []string, filter change.Filter) ([]change.Event, erro
 		out = append(out, found...)
 	}
 	return out, nil
+}
+
+// splitSchemaChanges separates DDL from the row changes it sits among.
+//
+// A schema change is not reversible and never becomes SQL, but a revert
+// generated across one describes a table in a shape it may no longer have — so
+// it travels this far in order to be reported.
+func splitSchemaChanges(events []change.Event) (rows, schema []change.Event) {
+	for _, ev := range events {
+		if ev.IsSchemaChange() {
+			schema = append(schema, ev)
+			continue
+		}
+		rows = append(rows, ev)
+	}
+	return rows, schema
 }

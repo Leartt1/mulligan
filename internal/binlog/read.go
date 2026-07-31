@@ -3,6 +3,7 @@ package binlog
 import (
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/go-mysql-org/go-mysql/replication"
 
@@ -64,15 +65,37 @@ func newParser(opts DecodeOptions) *replication.BinlogParser {
 // a transaction, recording it only on the one that commits, so a row event out of
 // MariaDB cannot otherwise say where it came from.
 func eventsFrom(logFile string, e *replication.BinlogEvent, scannedPos uint32, f change.Filter) ([]change.Event, error) {
+	// A DDL statement is not reversible and is never rendered as SQL, but a revert
+	// generated across one describes a table in a shape it may no longer have —
+	// and a retyped column restores a coerced value with no error at all. Carrying
+	// it is what lets the script warn.
+	if q, ok := e.Event.(*replication.QueryEvent); ok {
+		stmt := string(q.Query)
+		if !change.IsDDL(stmt) {
+			return nil, nil
+		}
+		ev := change.Event{
+			Schema:   string(q.Schema),
+			Op:       change.SchemaChange,
+			Query:    stmt,
+			LogFile:  logFile,
+			LogPos:   positionOf(e.Header, scannedPos),
+			At:       time.Unix(int64(e.Header.Timestamp), 0).UTC(),
+			ServerID: e.Header.ServerID,
+		}
+		if !f.Match(ev) {
+			return nil, nil
+		}
+		return []change.Event{ev}, nil
+	}
+
 	rows, ok := e.Event.(*replication.RowsEvent)
 	if !ok {
 		return nil, nil
 	}
 
 	hdr := *e.Header
-	if hdr.LogPos == 0 {
-		hdr.LogPos = scannedPos
-	}
+	hdr.LogPos = positionOf(e.Header, scannedPos)
 
 	events, err := Convert(logFile, &hdr, rows)
 	if err != nil {
@@ -86,4 +109,14 @@ func eventsFrom(logFile string, e *replication.BinlogEvent, scannedPos uint32, f
 		}
 	}
 	return kept, nil
+}
+
+// positionOf prefers the position the log recorded and falls back to where the
+// scan has reached. MariaDB leaves the position at zero on every event inside a
+// transaction, recording it only on the one that commits.
+func positionOf(hdr *replication.EventHeader, scannedPos uint32) uint32 {
+	if hdr.LogPos != 0 {
+		return hdr.LogPos
+	}
+	return scannedPos
 }

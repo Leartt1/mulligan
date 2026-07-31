@@ -30,6 +30,14 @@ func Plan(events []change.Event) ([]Reversal, error) {
 
 	out := make([]Reversal, 0, len(events))
 	for i := len(events) - 1; i >= 0; i-- {
+		// A schema change is carried through the pipeline so a caller can warn about
+		// it, but a row log cannot reverse one and nothing here pretends otherwise.
+		// It is skipped rather than refused: the row changes around it are still
+		// reversible, and the caller reports the schema change separately.
+		if events[i].IsSchemaChange() {
+			continue
+		}
+
 		stmt, err := Statement(events[i])
 		if err != nil {
 			return nil, fmt.Errorf("event %d: %w", i, err)

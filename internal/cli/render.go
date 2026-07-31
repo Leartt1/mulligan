@@ -24,7 +24,7 @@ const maxCommentBytes = 200
 // Every statement is preceded by the logged change it undoes and where to find
 // that change in the source log. Mulligan proposes and the operator commits, so
 // the script has to be readable by whoever is deciding whether to run it.
-func Render(w io.Writer, source string, window change.Filter, plan []reverse.Reversal) error {
+func Render(w io.Writer, source string, window change.Filter, schemaChanges []change.Event, plan []reverse.Reversal) error {
 	out := bufio.NewWriter(w)
 
 	fmt.Fprintln(out, "-- mulligan revert script")
@@ -44,6 +44,25 @@ func Render(w io.Writer, source string, window change.Filter, plan []reverse.Rev
 
 	fmt.Fprintf(out, "-- %s, newest change first\n", plural(len(plan), "statement"))
 	fmt.Fprintln(out, "-- REVIEW BEFORE RUNNING — nothing here has been executed.")
+
+	// A revert is built from each table as it was when the change happened. If the
+	// schema moved since, these statements describe a shape the table may no longer
+	// have. Dropped, renamed and narrowed columns fail loudly when the script runs;
+	// a retyped column does not — it restores a coerced value with no error at all,
+	// which is the case this warning exists for.
+	if len(schemaChanges) > 0 {
+		fmt.Fprintln(out, "--")
+		fmt.Fprintf(out, "-- WARNING: %s in this window. The statements below describe\n",
+			plural(len(schemaChanges), "schema change"))
+		fmt.Fprintln(out, "-- each table as it was at the time, which may not be its shape now. A dropped or")
+		fmt.Fprintln(out, "-- renamed column makes the script fail; a retyped one restores a converted value")
+		fmt.Fprintln(out, "-- without complaining. Check these against the tables before running:")
+		for _, ev := range schemaChanges {
+			fmt.Fprintf(out, "--   %s at %s:%d — %s\n",
+				ev.At.UTC().Format("2006-01-02 15:04:05 MST"),
+				commentSafe(ev.LogFile), ev.LogPos, commentSafe(ev.Query))
+		}
+	}
 
 	// The statements below are written in UTC and utf8mb4, so the session has to
 	// be put into those terms first. A session in another zone would store

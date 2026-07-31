@@ -17,6 +17,11 @@ const (
 	Update
 	// Delete is a row that ceased to exist.
 	Delete
+
+	// SchemaChange is a DDL statement seen among the row changes. It is never
+	// turned into SQL — a row log cannot reverse one — and exists so that a revert
+	// spanning one can say so.
+	SchemaChange
 )
 
 // Raw is a column value already rendered in the source database's own syntax,
@@ -38,6 +43,8 @@ func (o Op) String() string {
 		return "UPDATE"
 	case Delete:
 		return "DELETE"
+	case SchemaChange:
+		return "SCHEMA CHANGE"
 	}
 	return "UNKNOWN"
 }
@@ -121,3 +128,15 @@ type Checkpoint struct {
 func (c Checkpoint) IsZero() bool {
 	return c.LogFile == "" && c.GTID == ""
 }
+
+// IsSchemaChange reports whether this event records a schema change rather than
+// a row change.
+//
+// Schema changes are not reversible from a row log and Mulligan does not try.
+// They are carried because a revert generated across one describes a table in a
+// shape it may no longer have — and how that fails is measured in
+// internal/acceptance: a dropped, renamed or narrowed column fails loudly, but a
+// retyped one restores a coerced value with no error at all. Silence is the
+// thing worth warning about, so the statement travels with the changes it sits
+// among.
+func (e Event) IsSchemaChange() bool { return e.Op == SchemaChange }

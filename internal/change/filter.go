@@ -25,7 +25,11 @@ type Filter struct {
 
 // Match reports whether ev falls inside the filter.
 func (f Filter) Match(ev Event) bool {
-	if !f.matchesTable(ev.Schema, ev.Table) {
+	// A schema change is context for every table in the window, not a change to
+	// one of them. Which table a DDL statement names cannot be known without
+	// parsing SQL, and dropping it because it carries no table name would hide
+	// exactly the thing it is kept for.
+	if !ev.IsSchemaChange() && !f.matchesTable(ev.Schema, ev.Table) {
 		return false
 	}
 	if !f.From.IsZero() && ev.At.Before(f.From) {

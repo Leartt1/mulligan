@@ -173,6 +173,16 @@ func (s *mysqlServer) run(args ...string) (string, error) {
 	return string(out), nil
 }
 
+// dockerExecScript builds the command that pipes a script into the server.
+func dockerExecScript(s *mysqlServer, script string) *exec.Cmd {
+	cmd := exec.Command("docker", "exec", "--interactive",
+		"--env", "MYSQL_PWD="+rootPass, s.container,
+		s.flavor.client, "--user=root", "--protocol=TCP", "--host=127.0.0.1",
+		"--default-character-set=utf8mb4")
+	cmd.Stdin = strings.NewReader(script)
+	return cmd
+}
+
 // applyScript pipes a whole generated script into the server, the way an
 // operator runs one after reading it. Feeding it through stdin rather than
 // applying statements one by one is what exercises the session settings the
@@ -180,11 +190,7 @@ func (s *mysqlServer) run(args ...string) (string, error) {
 func (s *mysqlServer) applyScript(script string) {
 	s.t.Helper()
 
-	cmd := exec.Command("docker", "exec", "--interactive",
-		"--env", "MYSQL_PWD="+rootPass, s.container,
-		s.flavor.client, "--user=root", "--protocol=TCP", "--host=127.0.0.1",
-		"--default-character-set=utf8mb4")
-	cmd.Stdin = strings.NewReader(script)
+	cmd := dockerExecScript(s, script)
 
 	if out, err := cmd.CombinedOutput(); err != nil {
 		s.t.Fatalf("applying script: %v\n%s\nscript was:\n%s", err, out, script)
@@ -201,7 +207,7 @@ func (s *mysqlServer) revert(t *testing.T, events []change.Event, source string)
 	}
 
 	var script strings.Builder
-	if err := cli.Render(&script, source, change.Filter{}, plan); err != nil {
+	if err := cli.Render(&script, source, change.Filter{}, nil, plan); err != nil {
 		t.Fatalf("rendering the script: %v", err)
 	}
 	t.Logf("generated script:\n%s", script.String())

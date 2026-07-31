@@ -137,7 +137,12 @@ back.
   script. A half-correct revert is worse than none. (Partial JSON updates come
   from `binlog_row_value_options=PARTIAL_JSON`, which logs a diff rather than the
   document; set it empty to make those tables revertable.)
-- Does **not** undo `DROP` or `ALTER` — schema changes aren't in the row log.
+- Does **not** undo `DROP` or `ALTER` — schema changes aren't in the row log. It
+  does **notice** them: a revert whose window spans one carries a warning naming
+  each statement, because the script describes each table as it was at the time.
+  Measured against a real server: a dropped, renamed or narrowed column makes the
+  script fail loudly, but a **retyped** column restores a converted value with no
+  error at all. That silent case is what the warning is for.
 - Does **not** resolve conflicts. If something else touched the row after the
   statement you're undoing, a reversal will clobber it. Conflict warnings land
   in v0.4.

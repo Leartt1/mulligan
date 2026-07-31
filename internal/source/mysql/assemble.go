@@ -264,7 +264,28 @@ func (a *assembler) query_(ev *replication.QueryEvent, hdr *replication.EventHea
 		return result{advance: when}, nil
 	}
 
-	// Anything else is DDL or session bookkeeping. It is not reversible from row
-	// images and is not claimed to be.
+	// DDL is not reversible from row images and is never rendered as SQL. It is
+	// still recorded, because a revert generated across a schema change describes a
+	// table in a shape it may no longer have — and a retyped column restores a
+	// coerced value with no error at all. It commits on its own: DDL is not part of
+	// the surrounding transaction and carries no rows.
+	if change.IsDDL(stmt) {
+		return result{txn: &change.Transaction{
+			SourceID:    a.sourceID(hdr),
+			CommittedAt: when,
+			ServerID:    hdr.ServerID,
+			Events: []change.Event{{
+				Schema:   string(ev.Schema),
+				Op:       change.SchemaChange,
+				Query:    stmt,
+				LogFile:  a.logFile,
+				LogPos:   hdr.LogPos,
+				At:       when,
+				ServerID: hdr.ServerID,
+			}},
+		}}, nil
+	}
+
+	// Session bookkeeping. Not reversible, and not worth reporting.
 	return result{advance: when}, nil
 }

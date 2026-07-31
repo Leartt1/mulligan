@@ -155,7 +155,7 @@ func TestWatchCapturesChangesThatCanBeReverted(t *testing.T) {
 		t.Fatalf("generating the reversal: %v", err)
 	}
 	var script strings.Builder
-	if err := cli.Render(&script, "mulligan.db", change.Filter{}, plan); err != nil {
+	if err := cli.Render(&script, "mulligan.db", change.Filter{}, nil, plan); err != nil {
 		t.Fatalf("rendering: %v", err)
 	}
 	t.Logf("generated script:\n%s", script.String())
@@ -225,7 +225,7 @@ func TestWatchRestoresTemporalValuesFromANonUTCHost(t *testing.T) {
 		t.Fatalf("generating the reversal: %v", err)
 	}
 	var script strings.Builder
-	if err := cli.Render(&script, "mulligan.db", change.Filter{}, plan); err != nil {
+	if err := cli.Render(&script, "mulligan.db", change.Filter{}, nil, plan); err != nil {
 		t.Fatalf("rendering: %v", err)
 	}
 	t.Logf("generated script:\n%s", script.String())
@@ -317,7 +317,7 @@ func TestWatchAgainstMariaDBCapturesRevertableChanges(t *testing.T) {
 		t.Fatalf("generating the reversal: %v", err)
 	}
 	var script strings.Builder
-	if err := cli.Render(&script, "mulligan.db", change.Filter{}, plan); err != nil {
+	if err := cli.Render(&script, "mulligan.db", change.Filter{}, nil, plan); err != nil {
 		t.Fatalf("rendering: %v", err)
 	}
 	t.Logf("generated script:\n%s", script.String())
