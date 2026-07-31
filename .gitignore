@@ -6,8 +6,13 @@
 # go
 /vendor/
 *.test
-*.out
-coverage.*
+
+# Coverage output, anchored to the repo root. An unanchored "coverage.*" also
+# matches source files — it silently kept internal/store/coverage.go out of every
+# commit, and the pushed tree did not build.
+/coverage.out
+/coverage.html
+/*.out
 
 # local config / secrets
 .env

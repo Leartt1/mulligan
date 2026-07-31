@@ -17,7 +17,7 @@ import (
 )
 
 // Version is the build's reported version.
-const Version = "0.1.0-dev"
+const Version = "0.2.0-dev"
 
 const (
 	exitOK      = 0
