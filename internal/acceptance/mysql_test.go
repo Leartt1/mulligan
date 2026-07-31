@@ -201,7 +201,7 @@ func (s *mysqlServer) revert(t *testing.T, events []change.Event, source string)
 	}
 
 	var script strings.Builder
-	if err := cli.Render(&script, source, plan); err != nil {
+	if err := cli.Render(&script, source, change.Filter{}, plan); err != nil {
 		t.Fatalf("rendering the script: %v", err)
 	}
 	t.Logf("generated script:\n%s", script.String())

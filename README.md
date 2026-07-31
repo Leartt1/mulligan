@@ -97,9 +97,11 @@ that's a single event in the log, and a third row was left alone because it
 already had the value being set. Only the `status` column is rewritten: whatever
 else changed on those rows since is not clobbered.
 
-Narrow it with `-from` / `-to` — which take `2006-01-02 15:04:05` in local time
-or `2006-01-02T15:04:05Z07:00`, not a bare time of day — and save it with
-`-out revert.sql`. Reversals come
+Narrow it with `-from` / `-to`, and save it with `-out revert.sql`. Both accept a
+bare `13:05` — what you read off a graph mid-incident — as well as
+`2006-01-02 15:04:05` in local time or `2006-01-02T15:04:05Z07:00`. A bare time
+means its most recent occurrence, so `23:50` typed at 00:10 is fifty minutes ago
+rather than a day away, and the script header states the instant it resolved to. Reversals come
 out newest first, because undoing a sequence means applying the inverses in the
 opposite order.
 

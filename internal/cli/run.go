@@ -85,7 +85,9 @@ Generate flags:
                   and assigning to one is an error, so they must be named here.
                   Symptom of a missing name: ERROR 3105 when the script is run.
 
-Times accept "2006-01-02 15:04:05" (local) or "2006-01-02T15:04:05Z07:00".
+Times accept a bare "15:04" — meaning its most recent occurrence — as well as
+"2006-01-02 15:04:05" (local) or "2006-01-02T15:04:05Z07:00". The generated
+script states the window it resolved to.
 
 The generated script is a proposal. Nothing is executed — review it first.
 `)
@@ -172,7 +174,7 @@ func generate(args []string, stdout, stderr io.Writer) int {
 	// from a complete one, and the whole point is that a human trusts what they
 	// review.
 	var script bytes.Buffer
-	if err := Render(&script, label, plan); err != nil {
+	if err := Render(&script, label, filter, plan); err != nil {
 		fmt.Fprintf(stderr, "mulligan generate: %v\n", err)
 		return exitFailure
 	}

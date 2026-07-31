@@ -8,6 +8,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/learttytyri/mulligan/internal/change"
 	"github.com/learttytyri/mulligan/internal/reverse"
 )
 
@@ -23,11 +24,18 @@ const maxCommentBytes = 200
 // Every statement is preceded by the logged change it undoes and where to find
 // that change in the source log. Mulligan proposes and the operator commits, so
 // the script has to be readable by whoever is deciding whether to run it.
-func Render(w io.Writer, source string, plan []reverse.Reversal) error {
+func Render(w io.Writer, source string, window change.Filter, plan []reverse.Reversal) error {
 	out := bufio.NewWriter(w)
 
 	fmt.Fprintln(out, "-- mulligan revert script")
 	fmt.Fprintf(out, "-- source: %s\n", commentSafe(source))
+
+	// The window is stated because a bare time on the command line resolves to a
+	// date, and a reviewer reading this later cannot otherwise tell which one. It
+	// is also the first thing to check when a script contains less than expected.
+	if line := describeWindow(window); line != "" {
+		fmt.Fprintf(out, "-- window: %s\n", line)
+	}
 
 	if len(plan) == 0 {
 		fmt.Fprintln(out, "-- no matching changes found")
@@ -141,6 +149,22 @@ func printableOneLine(s string) bool {
 		}
 	}
 	return true
+}
+
+// describeWindow renders the bounds a script was generated for, or nothing when
+// it was unbounded.
+func describeWindow(f change.Filter) string {
+	const layout = "2006-01-02 15:04:05 MST"
+
+	switch {
+	case !f.From.IsZero() && !f.To.IsZero():
+		return f.From.UTC().Format(layout) + " to " + f.To.UTC().Format(layout)
+	case !f.From.IsZero():
+		return "from " + f.From.UTC().Format(layout)
+	case !f.To.IsZero():
+		return "up to " + f.To.UTC().Format(layout)
+	}
+	return ""
 }
 
 func plural(n int, noun string) string {

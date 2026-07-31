@@ -236,9 +236,9 @@ Known gaps in v0.1, worth closing whenever they get in the way:
   optional metadata has no flag for them, so the log genuinely cannot tell us.
   v0.2 has a replica connection that could read `information_schema` once and mark
   them automatically; it does not yet, and that remains the natural fix.
-- **`-from` / `-to` take a full timestamp only.** During an incident an operator
-  reaches for "13:05", which is refused. Accepting a bare time as today's date
-  would be a small change and a real kindness.
+- ~~`-from` / `-to` take a full timestamp only.~~ **Done:** a bare `13:05` now
+  resolves to its most recent occurrence, and the script header states which
+  instant that was — a resolution the reviewer cannot see is worse than a refusal.
 - **A table with no primary key** falls back to matching the full row image, which
   is correct but slow on a large table and matches one duplicate at a time.
 - **Vector columns are untested** (MySQL 9). Everything else a real table holds is

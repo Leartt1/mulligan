@@ -31,7 +31,7 @@ func TestRenderWritesEachStatementUnderItsProvenance(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := Render(&out, "binlog.000004", plan); err != nil {
+	if err := Render(&out, "binlog.000004", change.Filter{}, plan); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 	got := out.String()
@@ -54,7 +54,7 @@ func TestRenderWarnsThatNothingHasBeenExecuted(t *testing.T) {
 	plan := []reverse.Reversal{reversal(change.Delete, "orders", 100, "INSERT INTO `shop`.`orders` (`id`) VALUES (7);")}
 
 	var out strings.Builder
-	if err := Render(&out, "binlog.000004", plan); err != nil {
+	if err := Render(&out, "binlog.000004", change.Filter{}, plan); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 
@@ -73,7 +73,7 @@ func TestRenderPinsSessionTimeZoneAndCharsetBeforeAnyStatement(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := Render(&out, "binlog.000004", plan); err != nil {
+	if err := Render(&out, "binlog.000004", change.Filter{}, plan); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 	got := out.String()
@@ -94,7 +94,7 @@ func TestRenderPinsSessionTimeZoneAndCharsetBeforeAnyStatement(t *testing.T) {
 // look like a script that happens to do nothing.
 func TestRenderSaysSoWhenNothingMatched(t *testing.T) {
 	var out strings.Builder
-	if err := Render(&out, "binlog.000004", nil); err != nil {
+	if err := Render(&out, "binlog.000004", change.Filter{}, nil); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 	got := out.String()
@@ -114,7 +114,7 @@ func TestRenderCountsTheStatements(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := Render(&out, "binlog.000004", plan); err != nil {
+	if err := Render(&out, "binlog.000004", change.Filter{}, plan); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 
@@ -132,7 +132,7 @@ func TestRenderPreservesPlanOrder(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := Render(&out, "binlog.000004", plan); err != nil {
+	if err := Render(&out, "binlog.000004", change.Filter{}, plan); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 	got := out.String()
@@ -308,7 +308,7 @@ func TestRenderKeepsATableNameWithANewlineOnOneCommentLine(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := Render(&out, "binlog.000004", plan); err != nil {
+	if err := Render(&out, "binlog.000004", change.Filter{}, plan); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 	got := out.String()
@@ -331,7 +331,7 @@ func TestRenderShowsTheStatementThatCausedTheChange(t *testing.T) {
 	plan := []reverse.Reversal{r}
 
 	var out strings.Builder
-	if err := Render(&out, "binlog.000004", plan); err != nil {
+	if err := Render(&out, "binlog.000004", change.Filter{}, plan); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 	got := out.String()
@@ -351,7 +351,7 @@ func TestRenderOmitsCausedByLineWhenTheEventCarriesNoQuery(t *testing.T) {
 	withoutQuery := reversal(change.Insert, "orders", 800, "DELETE FROM `shop`.`orders` WHERE `id` = 9 LIMIT 1;")
 
 	var out strings.Builder
-	if err := Render(&out, "binlog.000004", []reverse.Reversal{withQuery, withoutQuery}); err != nil {
+	if err := Render(&out, "binlog.000004", change.Filter{}, []reverse.Reversal{withQuery, withoutQuery}); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 	got := out.String()
@@ -412,7 +412,7 @@ func TestRenderEmitsOnlyCommentsBlanksAndPlannedStatements(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := Render(&out, "binlog.000004\nDROP TABLE `shop`.`customers`;", hostile); err != nil {
+	if err := Render(&out, "binlog.000004\nDROP TABLE `shop`.`customers`;", change.Filter{}, hostile); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 	got := out.String()
@@ -461,7 +461,7 @@ func TestRenderDoesNotLetHostileTextForgeACommentLine(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if err := Render(&out, "binlog.000004", plan); err != nil {
+	if err := Render(&out, "binlog.000004", change.Filter{}, plan); err != nil {
 		t.Fatalf("Render returned error: %v", err)
 	}
 	got := out.String()
@@ -518,5 +518,61 @@ func TestCommentSafeKeepsOrdinaryTextInAnyScript(t *testing.T) {
 				t.Errorf("commentSafe(%q) = %q, want it unchanged", in, got)
 			}
 		})
+	}
+}
+
+// A bare time on the command line resolves to a date, and a reviewer reading the
+// script later — or an operator checking why it contains less than expected —
+// cannot otherwise tell which one it picked. The window belongs in the artifact,
+// not only in the terminal that produced it.
+func TestRenderStatesTheWindowItWasAskedFor(t *testing.T) {
+	plan := []reverse.Reversal{
+		reversal(change.Update, "orders", 4242, "UPDATE `shop`.`orders` SET `status` = 'pending' WHERE `id` = 7 LIMIT 1;"),
+	}
+	window := change.Filter{
+		From: time.Date(2026, 7, 30, 13, 5, 0, 0, time.UTC),
+		To:   time.Date(2026, 7, 30, 13, 10, 0, 0, time.UTC),
+	}
+
+	var out strings.Builder
+	if err := Render(&out, "mulligan.db", window, plan); err != nil {
+		t.Fatalf("Render returned error: %v", err)
+	}
+	got := out.String()
+
+	for _, want := range []string{"2026-07-30 13:05:00 UTC", "2026-07-30 13:10:00 UTC"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("script does not state the window bound %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestRenderStatesAHalfBoundedWindow(t *testing.T) {
+	plan := []reverse.Reversal{
+		reversal(change.Update, "orders", 4242, "UPDATE `shop`.`orders` SET `status` = 'x' WHERE `id` = 7 LIMIT 1;"),
+	}
+
+	var out strings.Builder
+	if err := Render(&out, "mulligan.db", change.Filter{From: time.Date(2026, 7, 30, 13, 5, 0, 0, time.UTC)}, plan); err != nil {
+		t.Fatalf("Render returned error: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "from 2026-07-30 13:05:00 UTC") {
+		t.Errorf("script does not state the lower bound:\n%s", got)
+	}
+}
+
+// An unbounded run has no window to state, and inventing one would be a claim
+// about what was asked for.
+func TestRenderSaysNothingAboutAnUnboundedWindow(t *testing.T) {
+	plan := []reverse.Reversal{
+		reversal(change.Update, "orders", 4242, "UPDATE `shop`.`orders` SET `status` = 'x' WHERE `id` = 7 LIMIT 1;"),
+	}
+
+	var out strings.Builder
+	if err := Render(&out, "mulligan.db", change.Filter{}, plan); err != nil {
+		t.Fatalf("Render returned error: %v", err)
+	}
+	if got := out.String(); strings.Contains(got, "window:") {
+		t.Errorf("an unbounded run claimed a window:\n%s", got)
 	}
 }

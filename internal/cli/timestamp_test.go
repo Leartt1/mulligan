@@ -61,3 +61,81 @@ func TestParseTimestampRejectsGarbage(t *testing.T) {
 		})
 	}
 }
+
+// During an incident an operator reads a time off a graph — "13:05" — and wants
+// changes from then. Refusing that and demanding a full date is unkind at the
+// worst possible moment, and it is the kind of friction that gets a tool put
+// down.
+func TestParseTimestampAcceptsABareTimeOfDay(t *testing.T) {
+	now := time.Date(2026, 7, 30, 14, 30, 0, 0, time.Local)
+
+	tests := []struct {
+		in   string
+		want time.Time
+	}{
+		{"13:05", time.Date(2026, 7, 30, 13, 5, 0, 0, time.Local)},
+		{"13:05:30", time.Date(2026, 7, 30, 13, 5, 30, 0, time.Local)},
+		{"09:00", time.Date(2026, 7, 30, 9, 0, 0, 0, time.Local)},
+		{"14:30", time.Date(2026, 7, 30, 14, 30, 0, 0, time.Local)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			got, err := parseTimestampAt(tt.in, now)
+			if err != nil {
+				t.Fatalf("parseTimestampAt(%q) returned error: %v", tt.in, err)
+			}
+			if !got.Equal(tt.want) {
+				t.Errorf("parseTimestampAt(%q) = %s, want %s", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// A bare time that has not happened yet today means yesterday. Someone looking
+// at an incident at 00:10 and typing 23:50 means fifty minutes ago, not
+// twenty-three hours from now — and reading it as today would produce a window
+// the collector cannot have reached, refused with a message about the future.
+func TestABareTimeStillToComeTodayMeansYesterday(t *testing.T) {
+	now := time.Date(2026, 7, 30, 0, 10, 0, 0, time.Local)
+
+	got, err := parseTimestampAt("23:50", now)
+	if err != nil {
+		t.Fatalf("parseTimestampAt returned error: %v", err)
+	}
+
+	want := time.Date(2026, 7, 29, 23, 50, 0, 0, time.Local)
+	if !got.Equal(want) {
+		t.Errorf("parseTimestampAt(%q) = %s, want the most recent occurrence %s", "23:50", got, want)
+	}
+}
+
+// A full timestamp says exactly what it means and must never be second-guessed,
+// however far in the future it sits.
+func TestAFullTimestampIsNeverShiftedByADay(t *testing.T) {
+	now := time.Date(2026, 7, 30, 0, 10, 0, 0, time.Local)
+
+	got, err := parseTimestampAt("2026-07-30 23:50:00", now)
+	if err != nil {
+		t.Fatalf("parseTimestampAt returned error: %v", err)
+	}
+
+	want := time.Date(2026, 7, 30, 23, 50, 0, 0, time.Local)
+	if !got.Equal(want) {
+		t.Errorf("a dated timestamp was moved: got %s, want %s", got, want)
+	}
+}
+
+// A bare time is still a date-less input, so the forms that are not times at all
+// must stay refused rather than being read as one.
+func TestParseTimestampStillRejectsThingsThatAreNotTimes(t *testing.T) {
+	now := time.Date(2026, 7, 30, 14, 30, 0, 0, time.Local)
+
+	for _, in := range []string{"25:00", "13:60", "13", ":05", "13:", "noon", "1305"} {
+		t.Run(in, func(t *testing.T) {
+			if got, err := parseTimestampAt(in, now); err == nil {
+				t.Errorf("parseTimestampAt(%q) = %s, want error", in, got)
+			}
+		})
+	}
+}
