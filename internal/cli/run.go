@@ -151,17 +151,15 @@ func generate(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
-	var (
-		events []change.Event
-		label  string
-	)
+	// Reading a store streams: the whole matching window is exactly what will not
+	// fit when it matters, and a run reverting ten million rows is the case this
+	// tool exists for. Reading files still collects, because a file is bounded by
+	// what someone chose to hand over.
 	if *storePath != "" {
-		events, err = eventsFromStore(*storePath, filter)
-		label = filepath.Base(*storePath)
-	} else {
-		events, err = eventsFromFiles(files, filter)
-		label = sourceLabel(files)
+		return generateFromStore(*storePath, filter, splitList(*generated), *outPath, stdout, stderr)
 	}
+
+	events, err := eventsFromFiles(files, filter)
 	if err != nil {
 		fmt.Fprintf(stderr, "mulligan generate: %v\n", err)
 		return exitFailure
@@ -183,7 +181,7 @@ func generate(args []string, stdout, stderr io.Writer) int {
 	// from a complete one, and the whole point is that a human trusts what they
 	// review.
 	var script bytes.Buffer
-	if err := Render(&script, label, filter, schemaChanges, plan); err != nil {
+	if err := Render(&script, sourceLabel(files), filter, schemaChanges, plan); err != nil {
 		fmt.Fprintf(stderr, "mulligan generate: %v\n", err)
 		return exitFailure
 	}
@@ -201,6 +199,108 @@ func generate(args []string, stdout, stderr io.Writer) int {
 		return exitFailure
 	}
 	fmt.Fprintf(stderr, "wrote %s (%s)\n", *outPath, plural(len(plan), "statement"))
+	return exitOK
+}
+
+// generateFromStore streams a revert out of a collected window.
+//
+// Writing to a file goes through a temporary one beside it, renamed only once
+// the whole script is written. A half-written script is indistinguishable from a
+// complete one, so a run that fails partway must leave nothing rather than
+// something that looks finished.
+func generateFromStore(path string, filter change.Filter, generated []string, outPath string, stdout, stderr io.Writer) int {
+	db, err := store.Open(path)
+	if err != nil {
+		fmt.Fprintf(stderr, "mulligan generate: %v\n", err)
+		return exitFailure
+	}
+	defer db.Close()
+
+	dest := stdout
+	var tmp *os.File
+	if outPath != "" {
+		tmp, err = os.CreateTemp(filepath.Dir(outPath), filepath.Base(outPath)+".partial-*")
+		if err != nil {
+			fmt.Fprintf(stderr, "mulligan generate: %v\n", err)
+			return exitFailure
+		}
+		defer func() {
+			if tmp != nil {
+				tmp.Close()
+				os.Remove(tmp.Name())
+			}
+		}()
+		if err := tmp.Chmod(0o600); err != nil {
+			fmt.Fprintf(stderr, "mulligan generate: %v\n", err)
+			return exitFailure
+		}
+		dest = tmp
+	}
+
+	// Schema changes have to be known before the first statement is written,
+	// because the warning sits above them. They are few — one row per DDL
+	// statement — where the row changes are not.
+	var schemaChanges []change.Event
+	err = db.EachEvent(filter, time.Now().UTC(), func(ev change.Event) error {
+		if ev.IsSchemaChange() {
+			schemaChanges = append(schemaChanges, ev)
+		}
+		return nil
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "mulligan generate: %v\n", err)
+		return exitFailure
+	}
+
+	script := newScriptWriter(dest)
+	script.open(filepath.Base(path), filter, schemaChanges)
+
+	err = db.EachEvent(filter, time.Now().UTC(), func(ev change.Event) error {
+		if ev.IsSchemaChange() {
+			return nil
+		}
+
+		one := []change.Event{ev}
+		change.MarkReadOnly(one, generated)
+
+		stmt, err := reverse.Statement(one[0])
+		if err != nil {
+			return err
+		}
+		return script.write(reverse.Reversal{Event: one[0], Statement: stmt})
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "mulligan generate: %v\n", err)
+		return exitFailure
+	}
+
+	if err := script.close(); err != nil {
+		fmt.Fprintf(stderr, "mulligan generate: %v\n", err)
+		return exitFailure
+	}
+
+	if tmp == nil {
+		return exitOK
+	}
+
+	// Everything is written: make it the file the operator asked for. Rename is
+	// atomic, so the destination never exists in a half-written state.
+	if err := tmp.Sync(); err != nil {
+		fmt.Fprintf(stderr, "mulligan generate: %v\n", err)
+		return exitFailure
+	}
+	name := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		fmt.Fprintf(stderr, "mulligan generate: %v\n", err)
+		return exitFailure
+	}
+	if err := os.Rename(name, outPath); err != nil {
+		fmt.Fprintf(stderr, "mulligan generate: %v\n", err)
+		return exitFailure
+	}
+	tmp = nil
+
+	fmt.Fprintf(stderr, "wrote %s\n", outPath)
 	return exitOK
 }
 

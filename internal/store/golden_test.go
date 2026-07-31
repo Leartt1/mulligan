@@ -232,3 +232,32 @@ func TestDecodeRefusesACountLargerThanTheRecord(t *testing.T) {
 		}
 	})
 }
+
+// A record carries the codec version it was written under, so a later build can
+// read what an earlier one wrote. Rejecting anything but the current version
+// would mean a store becomes unreadable the moment the codec gains a tag — and
+// once the source's binlogs rotate, that store is the only record of the changes
+// it holds.
+func TestDecodeAcceptsRecordsFromAnOlderCodec(t *testing.T) {
+	// Version 1, one value, tagInt, zigzag 1 → int64(1). Written by hand rather
+	// than by the encoder, so it stays a v1 record whatever the encoder becomes.
+	v1 := []byte{1, 0x01, 0x01, 0x02}
+
+	got, err := DecodeRow(v1)
+	if err != nil {
+		t.Fatalf("a version 1 record was rejected: %v", err)
+	}
+	if len(got) != 1 || got[0] != int64(1) {
+		t.Errorf("DecodeRow(v1) = %#v, want [1]", got)
+	}
+}
+
+// A record from a newer build may use a tag this one does not know, and reading
+// it would turn something unrecognised into a plausible value.
+func TestDecodeRefusesRecordsFromANewerCodec(t *testing.T) {
+	future := []byte{CodecVersion + 1, 0x01, 0x01, 0x02}
+
+	if got, err := DecodeRow(future); err == nil {
+		t.Fatalf("DecodeRow accepted a newer record, returning %#v", got)
+	}
+}

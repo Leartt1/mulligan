@@ -224,16 +224,30 @@ Deferred from v0.2, in rough order of how much they would cost to hit:
 - **Kill-mid-transaction is untested.** The atomicity is designed for and covered
   by a unit test for the rejected-transaction case, but no test SIGKILLs a running
   collector. That needs `watch` as a subprocess.
-- **Store format evolution** — `schema_version` and `codec_version` exist and a
-  newer store is refused; no migration path does.
+- ~~Store format evolution.~~ **Done:** an older store is brought forward by an
+  ordered list of migrations, each applied in one transaction with the version
+  bump that records it, so a crash midway leaves it on the version it was already
+  readable at. There are no steps yet — version 1 is the first published layout —
+  but the runner and its tests exist, because the first time a column has to move
+  on data that may be the only record of last week's changes is the wrong moment
+  to be writing it. Records also carry their codec version and an older one stays
+  readable; only a newer one is refused. There is deliberately no down step: a
+  store cannot be rebuilt, so undoing a migration would mean discarding data with
+  nothing to restore it from.
 - ~~No table filter on `watch`.~~ **Done:** `-tables` narrows what is collected,
   and running without it warns that the store becomes an unencrypted copy of
   every table.
 - ~~Nothing enforces a single collector per store.~~ **Done:** an advisory lock
   beside the store, released by the kernel however the process ends — so a
   restart after a crash never waits on a lock nobody holds.
-- **`generate` materializes the whole matching window in memory**, which is an OOM
-  at exactly the wrong moment.
+- ~~`generate` materializes the whole matching window in memory.~~ **Done for the
+  store path,** which streams: the database returns changes newest first — the
+  order a revert applies in — so nothing is collected to be reversed afterwards.
+  Writing to a file goes through a temporary one renamed on completion, so a run
+  that fails partway leaves nothing rather than something that looks finished,
+  and every script ends with a line saying how many statements it holds. Reading
+  binlog files still collects, which is bounded by what someone chose to hand
+  over.
 - **Backpressure** — a source purging binlogs faster than the collector reads them
   is now survivable (it records a gap), but nothing warns before it happens.
 

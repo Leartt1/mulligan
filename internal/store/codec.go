@@ -280,8 +280,13 @@ func (r *reader) checkVersion() error {
 	if err != nil {
 		return fmt.Errorf("store: record is empty: %w", err)
 	}
-	if v != CodecVersion {
-		return fmt.Errorf("store: record is codec version %d, this build reads version %d", v, CodecVersion)
+	// Older records stay readable: a store is not rebuildable, and once the
+	// source's binlogs rotate it is the only record of what it holds. A newer one
+	// is refused, because it may use a tag this build does not know and reading it
+	// would turn something unrecognised into a plausible value.
+	if v > CodecVersion {
+		return fmt.Errorf("store: record was written by a newer build (codec version %d, this build reads %d)",
+			v, CodecVersion)
 	}
 	return nil
 }

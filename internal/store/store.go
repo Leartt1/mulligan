@@ -106,7 +106,12 @@ func (s *Store) init() error {
 			"reading it here could turn records it does not understand into plausible wrong values",
 			s.path, version, SchemaVersion)
 	}
-	return nil
+
+	// An older store is brought forward rather than refused. Refusing would mean
+	// telling an operator that the only record of last week's changes is
+	// unreadable because the tool moved on, which is a poor answer during the
+	// incident where they need it.
+	return migrate(s.db, s.path, version)
 }
 
 // Bind records the source this store was captured from, or refuses if it was

@@ -308,3 +308,67 @@ func scanEvent(rows *sql.Rows) (change.Event, error) {
 	}
 	return ev, nil
 }
+
+// EachEvent hands over the stored changes matching f, newest first, without
+// collecting them.
+//
+// Newest first because that is the order a revert applies in, and getting it
+// from the database rather than by reversing a slice is what keeps the whole
+// matching window out of memory. A run reverting ten million rows is the case
+// this tool exists for, so materializing the set fails exactly when it matters.
+//
+// Coverage is checked before anything is handed over. The refusals are the
+// reason for reading through the store at all, and discovering one partway
+// through — with output already written — would defeat them.
+//
+// Everything runs in one transaction, so a prune committing midway cannot
+// truncate the window after it was judged sound.
+func (s *Store) EachEvent(f change.Filter, now time.Time, visit func(change.Event) error) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("store: reading changes from %s: %w", s.path, err)
+	}
+	defer tx.Rollback()
+
+	coverage, err := readCoverage(tx, s.path)
+	if err != nil {
+		return err
+	}
+	gaps, err := readGaps(tx)
+	if err != nil {
+		return err
+	}
+	misses, err := readMisses(tx)
+	if err != nil {
+		return err
+	}
+	if err := checkCoverage(coverage, f, now, gaps, misses); err != nil {
+		return err
+	}
+
+	rows, err := tx.Query(
+		`SELECT t.committed_at, t.server_id,
+		        r.schema_name, r.table_name, r.op, r.log_file, r.log_pos, r.query,
+		        r.columns, r.before, r.after
+		   FROM row_change r
+		   JOIN txn t ON t.id = r.txn_id
+		  ORDER BY r.id DESC`)
+	if err != nil {
+		return fmt.Errorf("store: reading changes from %s: %w", s.path, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		ev, err := scanEvent(rows)
+		if err != nil {
+			return err
+		}
+		if !f.Match(ev) {
+			continue
+		}
+		if err := visit(ev); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}

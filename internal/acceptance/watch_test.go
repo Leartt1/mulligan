@@ -2,8 +2,10 @@ package acceptance
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -490,5 +492,85 @@ func TestWatchCollectsOnlyTheTablesItWasGiven(t *testing.T) {
 	}
 	if sawEmail {
 		t.Error("personal data from an uncollected table reached the store")
+	}
+}
+
+// Generating from a store streams rather than collecting the window, so the
+// script has to come out identical to the collected path — same statements, same
+// order — and a run that fails partway must leave no file behind.
+func TestGenerateFromAStoreStreamsACompleteScript(t *testing.T) {
+	s := startMySQL(t)
+
+	s.exec("CREATE DATABASE shop")
+	s.exec(schema)
+	s.exec(seed)
+
+	dir := t.TempDir()
+	c := startCollector(t, s, filepath.Join(dir, "mulligan.db"))
+
+	before := s.query(snapshot)
+
+	// Several separate transactions, so ordering across them is exercised.
+	for i := 1; i <= 3; i++ {
+		s.exec(fmt.Sprintf("UPDATE shop.orders SET status = 'wrong' WHERE id = %d", i))
+	}
+	c.waitForEvents(t, 3)
+
+	outPath := filepath.Join(dir, "revert.sql")
+	var stdout, stderr strings.Builder
+	code := cli.Run([]string{"generate", "-store", filepath.Join(dir, "mulligan.db"), "-out", outPath},
+		&stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("generate exited %d: %s", code, stderr.String())
+	}
+
+	script, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("reading the script: %v", err)
+	}
+	t.Logf("streamed script:\n%s", script)
+
+	// The trailer is what says the script is whole; a run cut short has none.
+	if !strings.Contains(string(script), "end of script") {
+		t.Errorf("the script has no completion marker, so a truncated one would be indistinguishable:\n%s", script)
+	}
+
+	// Newest first, still: id 3 was damaged last and must be restored first.
+	first := strings.Index(string(script), "`id` = 3")
+	last := strings.Index(string(script), "`id` = 1")
+	if first == -1 || last == -1 {
+		t.Fatalf("the script does not cover every change:\n%s", script)
+	}
+	if first > last {
+		t.Errorf("statements are not newest first:\n%s", script)
+	}
+
+	s.applyScript(string(script))
+
+	if restored := s.query(snapshot); !reflect.DeepEqual(restored, before) {
+		t.Errorf("rows were not restored\n got: %q\nwant: %q", restored, before)
+	}
+}
+
+// A store the collector never wrote to must leave no file behind, the same as
+// before streaming: a half-written script and a complete one look alike, so a
+// failed run has to produce neither.
+func TestAFailedStoreGenerateLeavesNoFile(t *testing.T) {
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "revert.sql")
+
+	var stdout, stderr strings.Builder
+	code := cli.Run([]string{"generate", "-store", filepath.Join(dir, "empty.db"), "-out", outPath},
+		&stdout, &stderr)
+
+	if code == 0 {
+		t.Fatal("generate succeeded against a store that collected nothing")
+	}
+	if _, err := os.Stat(outPath); err == nil {
+		t.Error("a failed run left an output file behind")
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, "*.partial-*"))
+	if len(matches) > 0 {
+		t.Errorf("a failed run left its temporary file behind: %v", matches)
 	}
 }

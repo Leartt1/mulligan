@@ -50,19 +50,7 @@ func Render(w io.Writer, source string, window change.Filter, schemaChanges []ch
 	// have. Dropped, renamed and narrowed columns fail loudly when the script runs;
 	// a retyped column does not — it restores a coerced value with no error at all,
 	// which is the case this warning exists for.
-	if len(schemaChanges) > 0 {
-		fmt.Fprintln(out, "--")
-		fmt.Fprintf(out, "-- WARNING: %s in this window. The statements below describe\n",
-			plural(len(schemaChanges), "schema change"))
-		fmt.Fprintln(out, "-- each table as it was at the time, which may not be its shape now. A dropped or")
-		fmt.Fprintln(out, "-- renamed column makes the script fail; a retyped one restores a converted value")
-		fmt.Fprintln(out, "-- without complaining. Check these against the tables before running:")
-		for _, ev := range schemaChanges {
-			fmt.Fprintf(out, "--   %s at %s:%d — %s\n",
-				ev.At.UTC().Format("2006-01-02 15:04:05 MST"),
-				commentSafe(ev.LogFile), ev.LogPos, commentSafe(ev.Query))
-		}
-	}
+	writeSchemaWarning(out, schemaChanges)
 
 	// The statements below are written in UTC and utf8mb4, so the session has to
 	// be put into those terms first. A session in another zone would store
@@ -76,25 +64,30 @@ func Render(w io.Writer, source string, window change.Filter, schemaChanges []ch
 	// it all goes through commentSafe. See its doc comment for what a value that
 	// did not would do to this script.
 	for _, r := range plan {
-		ev := r.Event
-		fmt.Fprintf(out, "\n-- undo %s %s.%s — %s:%d at %s\n",
-			ev.Op, commentSafe(ev.Schema), commentSafe(ev.Table),
-			commentSafe(ev.LogFile), ev.LogPos,
-			ev.At.UTC().Format("2006-01-02 15:04:05 MST"))
-
-		// Most events carry no query — MySQL logs it only under
-		// binlog_rows_query_log_events, MariaDB only for annotated rows. The line is
-		// omitted rather than left blank, because a "caused by" that carried over
-		// from the previous event would attribute this change to a statement that
-		// did not cause it.
-		if ev.Query != "" {
-			fmt.Fprintf(out, "-- caused by: %s\n", commentSafe(ev.Query))
-		}
-
-		fmt.Fprintln(out, r.Statement)
+		writeReversal(out, r)
 	}
 
 	return out.Flush()
+}
+
+// writeReversal emits one statement under its provenance.
+func writeReversal(out *bufio.Writer, r reverse.Reversal) {
+	ev := r.Event
+	fmt.Fprintf(out, "\n-- undo %s %s.%s — %s:%d at %s\n",
+		ev.Op, commentSafe(ev.Schema), commentSafe(ev.Table),
+		commentSafe(ev.LogFile), ev.LogPos,
+		ev.At.UTC().Format("2006-01-02 15:04:05 MST"))
+
+	// Most events carry no query — MySQL logs it only under
+	// binlog_rows_query_log_events, MariaDB only for annotated rows. The line is
+	// omitted rather than left blank, because a "caused by" that carried over from
+	// the previous event would attribute this change to a statement that did not
+	// cause it.
+	if ev.Query != "" {
+		fmt.Fprintf(out, "-- caused by: %s\n", commentSafe(ev.Query))
+	}
+
+	fmt.Fprintln(out, r.Statement)
 }
 
 // commentSafe renders s for placement on a SQL line comment.
@@ -168,6 +161,31 @@ func printableOneLine(s string) bool {
 		}
 	}
 	return true
+}
+
+// writeSchemaWarning reports the schema changes a window spans.
+//
+// A revert is built from each table as it was when the change happened, so these
+// statements may describe a shape the table no longer has. Dropped, renamed and
+// narrowed columns make the script fail loudly when it runs; a retyped one
+// restores a converted value with no error at all, which is the case this exists
+// for.
+func writeSchemaWarning(out *bufio.Writer, schemaChanges []change.Event) {
+	if len(schemaChanges) == 0 {
+		return
+	}
+
+	fmt.Fprintln(out, "--")
+	fmt.Fprintf(out, "-- WARNING: %s in this window. The statements below describe\n",
+		plural(len(schemaChanges), "schema change"))
+	fmt.Fprintln(out, "-- each table as it was at the time, which may not be its shape now. A dropped or")
+	fmt.Fprintln(out, "-- renamed column makes the script fail; a retyped one restores a converted value")
+	fmt.Fprintln(out, "-- without complaining. Check these against the tables before running:")
+	for _, ev := range schemaChanges {
+		fmt.Fprintf(out, "--   %s at %s:%d — %s\n",
+			ev.At.UTC().Format("2006-01-02 15:04:05 MST"),
+			commentSafe(ev.LogFile), ev.LogPos, commentSafe(ev.Query))
+	}
 }
 
 // describeWindow renders the bounds a script was generated for, or nothing when

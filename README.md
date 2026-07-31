@@ -122,6 +122,12 @@ oldest first, which is what a glob already gives you:
 $ mulligan generate -tables shop.orders /var/lib/mysql/binlog.00000[4-6]
 ```
 
+Every script ends with a line saying how many statements it holds. A script
+without it was cut short — by a crash, a full disk — and is not safe to run.
+Writing with `-out` goes through a temporary file renamed once the whole script
+is written, so a failed run leaves nothing rather than something that looks
+finished.
+
 Nothing is executed. Mulligan proposes; you review, then you run it.
 
 ### Generated columns
