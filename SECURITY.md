@@ -1,15 +1,19 @@
 # Security
 
-## What Mulligan is, as of v0.1
+## What Mulligan is, as of v0.2
 
-An offline command-line program. It reads a binary log file, writes a SQL script
-to stdout or a file, and exits. It opens no network connections, listens on no
-port, starts no server, and executes no SQL. It holds no credentials, because
-file mode never connects to a database.
+Two commands, and they have different shapes.
 
-That shape is most of the security story. It changes in v0.2, when live tailing
-adds a replication connection and stored credentials, and again in v0.3 with the
-web console.
+`mulligan generate` is offline. It reads a binary log file or a local store,
+writes a SQL script to stdout or a file, and exits. It listens on no port, starts
+no server, and executes no SQL.
+
+`mulligan watch` is a long-running process that connects to a database as a
+replica. It holds credentials, keeps an outbound connection open for as long as
+it runs, and writes a store to disk containing the row data it collects. It also
+executes no SQL beyond reading server settings on connect.
+
+Neither command listens on a port. That changes in v0.3 with the web console.
 
 ## Threat model
 
@@ -46,6 +50,39 @@ hostile values containing quote characters, backslashes, comment openers and
 statement terminators, in a table and a column whose names contain backticks. A
 canary table stands by; the test fails if the generated script drops it.
 
+## Credentials
+
+`watch` needs an account with `REPLICATION SLAVE` and `REPLICATION CLIENT`. It
+does not need read access to your tables to stream their changes, so the account
+it runs as should not have any.
+
+Supply the connection string in `MULLIGAN_DSN`. The `-dsn` flag works and is
+supported, but an argument is visible in `ps` output to every user on the host,
+and the command warns when you use it.
+
+No message Mulligan produces contains the password — not errors, not logs, and
+not the replication library's own startup log, which is handed a redacted
+configuration. If you find a path that prints one, that is a vulnerability and
+worth reporting.
+
+On Linux the environment of a running process is readable through `/proc` by the
+same user and by root, so `MULLIGAN_DSN` protects against other users on the box
+rather than against someone who is already you.
+
+## The store
+
+`watch` writes a SQLite file holding full before and after images of every row
+that changed, plus the statement text when the server logs it. **Treat it as
+being as sensitive as the tables it came from** — it is a partial copy of them.
+
+- It is created mode `0600`, and so are scripts written with `generate -out`.
+- It is not encrypted.
+- WAL mode means it is three files, not one. A backup that copies only the `.db`
+  captures a truncated store.
+- `watch` has no table filter yet, so it captures every table on the server,
+  including any holding personal data. Retention (`-retain`, default 7 days) is
+  currently the only thing that bounds how long that copy persists.
+
 ## Limits you should know about
 
 - **The script is executed by you.** Mulligan proposes; nothing runs until a
@@ -61,9 +98,16 @@ canary table stands by; the test fails if the generated script drops it.
   verified, but a malformed log could still crash the process. For a
   short-running CLI that is a failed run, not a foothold — reconsider when v0.2
   makes it long-lived.
-- **No authentication or authorization exists yet**, because there is nothing to
-  authenticate to. The web console in v0.3 needs an answer before it ships; see
-  PLAN.md §0.
+- **No authentication or authorization exists yet**, because nothing listens.
+  The web console in v0.3 needs an answer before it ships; see PLAN.md §0.
+- **A compromised source server can influence the collector.** Binlog parsing
+  happens in a third-party parser over bytes the server chooses, and the values
+  it sends are stored and later rendered into SQL. The quoting above is what
+  stands between that and executable SQL, and it is tested against hostile input
+  — but a hostile *server* is a wider surface than a hostile *row*, and Mulligan
+  is not hardened against one.
+- **Nothing enforces a single collector per store.** Two `watch` processes on one
+  file would interleave into an order that means nothing. Run one.
 
 ## Reporting a vulnerability
 

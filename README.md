@@ -8,9 +8,9 @@ it at the database's change log, see a timeline of recent writes, preview the
 diff, and generate — or apply — the reverse SQL. No migration to a new database,
 no lock-in.
 
-> Status: **v0.1 — engine + CLI.** Reads a MySQL ROW binlog file and generates
-> the SQL that undoes it. Live tailing and the web console are next; see
-> [PLAN.md](PLAN.md) for the roadmap.
+> Status: **v0.2 — live tailing.** Follows a running MySQL or MariaDB and keeps a
+> rolling window of recent changes, so a revert can be generated without going
+> looking for binlog files. The web console is next; see [PLAN.md](PLAN.md).
 
 ## The idea
 
@@ -45,7 +45,30 @@ the database it came from.
 MariaDB 10.5+ spells all three the same way, and is covered by the same
 end-to-end tests as MySQL.
 
-Then point it at a binlog and read what it proposes:
+### Follow a server
+
+`watch` connects as a replica and keeps a rolling window of recent changes:
+
+```console
+$ export MULLIGAN_DSN='repl:secret@tcp(db.internal:3306)/'
+$ mulligan watch -store mulligan.db -server-id 1001 -retain 168h
+```
+
+`-server-id` has no default on purpose: it must be unique across your
+replication topology, because a collision disconnects whichever replica claimed
+it first. The account needs `REPLICATION SLAVE` and `REPLICATION CLIENT`, and
+nothing else.
+
+Then generate from what it collected:
+
+```console
+$ mulligan generate -store mulligan.db -tables shop.orders \
+    -from '2026-07-30 13:05:00' -to '2026-07-30 13:10:00'
+```
+
+### Or read a binlog file directly
+
+No collector, no store — useful when someone hands you a log:
 
 ```console
 $ mulligan generate -binlog /var/lib/mysql/binlog.000004 -tables shop.orders
@@ -74,7 +97,9 @@ that's a single event in the log, and a third row was left alone because it
 already had the value being set. Only the `status` column is rewritten: whatever
 else changed on those rows since is not clobbered.
 
-Narrow it with `-from` / `-to`, and save it with `-out revert.sql`. Reversals come
+Narrow it with `-from` / `-to` — which take `2006-01-02 15:04:05` in local time
+or `2006-01-02T15:04:05Z07:00`, not a bare time of day — and save it with
+`-out revert.sql`. Reversals come
 out newest first, because undoing a sequence means applying the inverses in the
 opposite order.
 
@@ -114,7 +139,25 @@ back.
 - Does **not** resolve conflicts. If something else touched the row after the
   statement you're undoing, a reversal will clobber it. Conflict warnings land
   in v0.4.
-- Reaches back only as far as your binlogs are kept.
+- Reaches back only as far as your binlogs are kept, or as far as the store's
+  retention window when reading a store.
+
+**The store says when it cannot answer.** This is the part worth understanding,
+because the alternative is worse than an error. `generate` refuses — rather than
+returning fewer rows — when the window reaches back before collection began,
+overlaps a period the collector missed, or when the collector has stopped:
+
+```console
+$ mulligan generate -store mulligan.db
+mulligan generate: store: is stale — nothing has been collected for 41m29s
+(allowed 5m0s, last change at 2026-07-31 06:43:52 UTC); the collector may have
+stopped, and an empty result here would read as though nothing happened
+```
+
+A dead collector and a quiet database look identical from the outside. Without
+that check the answer during an incident would be `no matching changes found`
+and exit 0, which reads as "nothing happened" at exactly the moment something
+did.
 
 ## Why not just…
 
