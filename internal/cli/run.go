@@ -37,6 +37,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return generate(args[1:], stdout, stderr)
 	case "watch":
 		return watch(args[1:], stdout, stderr)
+	case "status":
+		return status(args[1:], stdout, stderr)
 	case "version", "-version", "--version":
 		fmt.Fprintf(stdout, "mulligan %s\n", Version)
 		return exitOK
@@ -56,6 +58,7 @@ func usage(w io.Writer) {
 Usage:
   mulligan watch [flags]              follow a live server into a window store
   mulligan generate [flags] FILE...   generate SQL that undoes logged changes
+  mulligan status [flags]             report what a window store can answer for
   mulligan version                    print the version
   mulligan help                       print this message
 
@@ -89,6 +92,16 @@ Generate flags:
                   and assigning to one is an error. Only needed when reading
                   binlog files: watch asks the server instead.
                   Symptom of a missing name: ERROR 3105 when the script is run.
+
+Status flags:
+  -store FILE     window store to report on (required)
+  -json           write the report as one JSON object instead of text
+
+Status exits 0 when the store is sound and its collector is keeping up, and 1
+when something needs looking at — a damaged file, a store holding nothing, or a
+collector that has stopped. Gaps and missed changes are always listed but never
+decide the exit code: they are permanent history, and a check that latches red
+forever is a check nobody reads.
 
 Times accept a bare "15:04" — meaning its most recent occurrence — as well as
 "2006-01-02 15:04:05" (local) or "2006-01-02T15:04:05Z07:00". The generated

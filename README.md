@@ -76,6 +76,71 @@ $ mulligan generate -store mulligan.db -tables shop.orders \
     -from '2026-07-30 13:05:00' -to '2026-07-30 13:10:00'
 ```
 
+### Check what the store can answer for
+
+A collector that has stopped and a database nobody is writing to look identical
+from the outside. `status` is how you tell them apart — before you need to:
+
+```console
+$ mulligan status -store shop.db
+store     shop.db
+source    mysql · server mysql:b8f274cf-8d9b-11f1-bb37-2ae711accf27 · gtid none — the server issues no GTIDs
+coverage  2026-08-01 11:27:30 → 2026-08-01 11:27:34 UTC
+retention 168h0m0s
+freshness last change 3s ago (allowed 30s)
+integrity ok
+gaps      none
+misses    none
+
+OK
+```
+
+It exits 0 when the store is sound and its collector is keeping up, and 1 when
+something needs looking at — so it works as a cron check without parsing prose:
+
+```console
+$ mulligan status -store shop.db
+...
+freshness last change 38s ago (allowed 30s)
+...
+NOT OK: the store is stale — nothing has been collected for 38s (allowed 30s, last change at 2026-08-01 11:27:34 UTC); the collector may have stopped, and an empty result here would read as though nothing happened
+$ echo $?
+1
+```
+
+Gaps and missed changes are always listed in full, but they never decide the exit
+code. They are permanent history — nothing removes them — and a check that
+latches red forever is a check nobody reads. `generate` still refuses any window
+that overlaps one.
+
+`-json` writes the same report as a single object, for anything that would rather
+not read the text:
+
+```console
+$ mulligan status -store shop.db -json
+{
+  "store": "shop.db",
+  "healthy": true,
+  "verdict": "",
+  "source": {
+    "flavor": "mysql",
+    "server_identity": "mysql:b8f274cf-8d9b-11f1-bb37-2ae711accf27",
+    "gtid_dialect": "",
+    "decode_fingerprint": "v1;parse_time=true;use_decimal=true;verify_checksum=true;tz=UTC"
+  },
+  "coverage": {
+    "from": "2026-08-01T11:27:30Z",
+    "to": "2026-08-01T11:27:34Z",
+    "max_staleness_seconds": 30,
+    "retention_seconds": 604800
+  },
+  "stale_seconds": 3,
+  "integrity_problems": [],
+  "gaps": [],
+  "misses": []
+}
+```
+
 ### Or read a binlog file directly
 
 No collector, no store — useful when someone hands you a log:

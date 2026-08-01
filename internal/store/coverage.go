@@ -175,6 +175,22 @@ func metaInt(tx *sql.Tx, key string) (int64, bool, error) {
 	return n, true, nil
 }
 
+// noCoverageReason and staleReason word the two conditions under which a store
+// cannot answer for anything at all, whatever window is asked for.
+//
+// They live here once because two callers reach them: generate refuses on them,
+// and status reports on them. Worded separately they would drift, and a status
+// that says "OK" while generate refuses is worse than no status at all — it
+// would send an operator into an incident believing a window they cannot have.
+const noCoverageReason = "has not recorded any changes yet; " +
+	"start mulligan watch against the source before generating a revert"
+
+func staleReason(c Coverage, behind time.Duration) string {
+	return fmt.Sprintf("is stale — nothing has been collected for %s (allowed %s, last change at %s UTC); "+
+		"the collector may have stopped, and an empty result here would read as though nothing happened",
+		behind.Round(time.Second), c.MaxStaleness, c.To.Format("2006-01-02 15:04:05"))
+}
+
 // checkCoverage decides whether the store can answer for the window in f.
 //
 // Every branch here exists because the alternative is an empty or partial result
@@ -183,14 +199,11 @@ func metaInt(tx *sql.Tx, key string) (int64, bool, error) {
 // with the reason, rather than quietly returning fewer rows.
 func checkCoverage(c Coverage, f change.Filter, now time.Time, gaps []gapRow, misses []missRow) error {
 	if c.To.IsZero() {
-		return fmt.Errorf("store: has not recorded any changes yet; " +
-			"start mulligan watch against the source before generating a revert")
+		return fmt.Errorf("store: %s", noCoverageReason)
 	}
 
 	if behind := now.Sub(c.To); behind > c.MaxStaleness {
-		return fmt.Errorf("store: is stale — nothing has been collected for %s (allowed %s, last change at %s UTC); "+
-			"the collector may have stopped, and an empty result here would read as though nothing happened",
-			behind.Round(time.Second), c.MaxStaleness, c.To.Format("2006-01-02 15:04:05"))
+		return fmt.Errorf("store: %s", staleReason(c, behind))
 	}
 
 	// An unset From asks for as far back as the store goes, which is a different

@@ -208,8 +208,15 @@ Toward **v0.3 (API + web console)**:
 1. Serve the store over HTTP: timeline, filter, diff preview, download `.sql`.
 2. Settle the auth question in §0 before anything binds to a port.
 3. Decide the UI stack (§0), and embed it with `go:embed`.
-4. `mulligan status`, so coverage health can be looked at deliberately rather than
-   discovered mid-incident. The store already exposes what it needs.
+4. ~~`mulligan status`, so coverage health can be looked at deliberately rather
+   than discovered mid-incident.~~ **Done.** It reports coverage, retention,
+   freshness, integrity, gaps and missed changes, as text or `-json`, and exits 1
+   when the store is unsound or its collector has stopped — so a cron check can
+   ask without parsing prose. Gaps and misses are listed but never decide the
+   exit code: they are permanent history, and a check that latches red forever is
+   a check nobody reads. The staleness wording is shared with `generate`'s
+   refusal so the two cannot come to different conclusions, and the JSON shape is
+   the contract v0.3's endpoint should serve.
 
 Deferred from v0.2, in rough order of how much they would cost to hit:
 
