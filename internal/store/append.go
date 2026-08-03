@@ -245,9 +245,7 @@ func (s *Store) Events(f change.Filter, now time.Time) ([]change.Event, error) {
 	}
 
 	rows, err := tx.Query(
-		`SELECT t.committed_at, t.server_id,
-		        r.schema_name, r.table_name, r.op, r.log_file, r.log_pos, r.query,
-		        r.columns, r.before, r.after
+		`SELECT ` + eventColumns + `
 		   FROM row_change r
 		   JOIN txn t ON t.id = r.txn_id
 		  ORDER BY r.id`)
@@ -272,41 +270,64 @@ func (s *Store) Events(f change.Filter, now time.Time) ([]change.Event, error) {
 	return out, nil
 }
 
-func scanEvent(rows *sql.Rows) (change.Event, error) {
-	var (
-		ev            change.Event
-		committedAt   int64
-		op            int
-		query         sql.NullString
-		columns       []byte
-		before, after []byte
-	)
+// eventRow is one row_change as it comes out of the database, before its stored
+// images are decoded.
+//
+// Scanning and decoding are separated so a read that selects extra columns of
+// its own — a paged read selects the row id — can reuse the decoding rather than
+// restate it. Two copies of it would be two things to keep in step with the
+// codec, and drifting apart would turn stored bytes into plausible wrong values.
+type eventRow struct {
+	ev            change.Event
+	committedAt   int64
+	op            int
+	query         sql.NullString
+	columns       []byte
+	before, after []byte
+}
 
-	if err := rows.Scan(&committedAt, &ev.ServerID,
-		&ev.Schema, &ev.Table, &op, &ev.LogFile, &ev.LogPos, &query,
-		&columns, &before, &after); err != nil {
-		return ev, fmt.Errorf("store: reading a change: %w", err)
-	}
+// dest lists the scan destinations, in the column order eventColumns selects.
+func (r *eventRow) dest() []any {
+	return []any{&r.committedAt, &r.ev.ServerID,
+		&r.ev.Schema, &r.ev.Table, &r.op, &r.ev.LogFile, &r.ev.LogPos, &r.query,
+		&r.columns, &r.before, &r.after}
+}
 
-	ev.At = time.Unix(committedAt, 0).UTC()
-	ev.Op = change.Op(op)
-	ev.Query = query.String
+// eventColumns is the select list every read of a stored change uses, so the
+// order here and the order in dest cannot drift apart.
+const eventColumns = `t.committed_at, t.server_id,
+	        r.schema_name, r.table_name, r.op, r.log_file, r.log_pos, r.query,
+	        r.columns, r.before, r.after`
+
+func (r *eventRow) decode() (change.Event, error) {
+	ev := r.ev
+	ev.At = time.Unix(r.committedAt, 0).UTC()
+	ev.Op = change.Op(r.op)
+	ev.Query = r.query.String
 
 	var err error
-	if ev.Columns, err = DecodeColumns(columns); err != nil {
+	if ev.Columns, err = DecodeColumns(r.columns); err != nil {
 		return ev, fmt.Errorf("store: %s.%s at %s:%d: %w", ev.Schema, ev.Table, ev.LogFile, ev.LogPos, err)
 	}
-	if before != nil {
-		if ev.Before, err = DecodeRow(before); err != nil {
+	if r.before != nil {
+		if ev.Before, err = DecodeRow(r.before); err != nil {
 			return ev, fmt.Errorf("store: %s.%s at %s:%d before image: %w", ev.Schema, ev.Table, ev.LogFile, ev.LogPos, err)
 		}
 	}
-	if after != nil {
-		if ev.After, err = DecodeRow(after); err != nil {
+	if r.after != nil {
+		if ev.After, err = DecodeRow(r.after); err != nil {
 			return ev, fmt.Errorf("store: %s.%s at %s:%d after image: %w", ev.Schema, ev.Table, ev.LogFile, ev.LogPos, err)
 		}
 	}
 	return ev, nil
+}
+
+func scanEvent(rows *sql.Rows) (change.Event, error) {
+	var r eventRow
+	if err := rows.Scan(r.dest()...); err != nil {
+		return r.ev, fmt.Errorf("store: reading a change: %w", err)
+	}
+	return r.decode()
 }
 
 // EachEvent hands over the stored changes matching f, newest first, without
@@ -347,9 +368,7 @@ func (s *Store) EachEvent(f change.Filter, now time.Time, visit func(change.Even
 	}
 
 	rows, err := tx.Query(
-		`SELECT t.committed_at, t.server_id,
-		        r.schema_name, r.table_name, r.op, r.log_file, r.log_pos, r.query,
-		        r.columns, r.before, r.after
+		`SELECT ` + eventColumns + `
 		   FROM row_change r
 		   JOIN txn t ON t.id = r.txn_id
 		  ORDER BY r.id DESC`)
