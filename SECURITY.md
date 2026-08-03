@@ -1,8 +1,8 @@
 # Security
 
-## What Mulligan is, as of v0.2
+## What Mulligan is, as of v0.3a
 
-Two commands, and they have different shapes.
+Four commands, and they have different shapes.
 
 `mulligan generate` is offline. It reads a binary log file or a local store,
 writes a SQL script to stdout or a file, and exits. It listens on no port, starts
@@ -13,7 +13,19 @@ replica. It holds credentials, keeps an outbound connection open for as long as
 it runs, and writes a store to disk containing the row data it collects. It also
 executes no SQL beyond reading server settings on connect.
 
-Neither command listens on a port. That changes in v0.3 with the web console.
+`mulligan status` is offline: it opens a store, prints what it can answer for,
+and exits.
+
+`mulligan serve` listens on a port. It is read-only — four `GET` routes over the
+store, and no route executes SQL against the watched database — but what it
+serves is row data, so where it binds matters:
+
+- The default is `127.0.0.1:8080`, which is reachable only from the host.
+- Any other address refuses to start unless `MULLIGAN_TOKEN` is set. With it
+  set, every request must carry `Authorization: Bearer <token>`, compared in
+  constant time, and the refusal never repeats the presented value back.
+- There is no TLS. Behind a reverse proxy or through an SSH tunnel is the
+  intended shape for anything beyond one operator on one host.
 
 ## Threat model
 
@@ -79,9 +91,13 @@ being as sensitive as the tables it came from** — it is a partial copy of them
 - It is not encrypted.
 - WAL mode means it is three files, not one. A backup that copies only the `.db`
   captures a truncated store.
-- `watch` has no table filter yet, so it captures every table on the server,
-  including any holding personal data. Retention (`-retain`, default 7 days) is
-  currently the only thing that bounds how long that copy persists.
+- Without `-tables`, `watch` captures every table on the server, including any
+  holding personal data. Naming the tables you care about is a data-protection
+  measure, not an optimisation. Retention (`-retain`, default 7 days) bounds how
+  long the copy persists.
+- `mulligan serve` hands that content out over HTTP. Loopback by default, and a
+  token is required to bind anywhere else — but a token is not a permission
+  model: whoever holds it reads every row in the store.
 
 ## Limits you should know about
 
@@ -91,15 +107,23 @@ being as sensitive as the tables it came from** — it is a partial copy of them
 - **The generated script contains row data in clear text**, including whatever
   the reverted rows held. Treat a saved `.sql` as being as sensitive as the table
   it came from. Files written with `-out` are created mode `0600`.
-- **The whole matching event set is held in memory.** A very large binlog with a
-  broad filter can exhaust it. Narrow with `-tables`, `-from` and `-to`.
+- **Reading a binlog file holds the whole matching event set in memory.** A very
+  large log with a broad filter can exhaust it. Narrow with `-tables`, `-from`
+  and `-to`. Reads from a store stream instead, including the one behind
+  `GET /api/revert.sql`.
 - **Binlog parsing happens in a third-party parser**
   (`github.com/go-mysql-org/go-mysql`) over untrusted bytes. Checksums are
   verified, but a malformed log could still crash the process. For a
   short-running CLI that is a failed run, not a foothold — reconsider when v0.2
   makes it long-lived.
-- **No authentication or authorization exists yet**, because nothing listens.
-  The web console in v0.3 needs an answer before it ships; see PLAN.md §0.
+- **Authentication is one static token, or nothing at all.** A loopback listener
+  requires none; anything else requires `MULLIGAN_TOKEN`. There is no rotation,
+  no expiry, no per-user identity, and therefore no audit trail worth the name —
+  a log line could only ever say "someone holding the token". No TLS either; put
+  a reverse proxy in front, or use an SSH tunnel.
+- **The API is read-only, and that is load-bearing.** No route executes SQL
+  against the watched database, so a stolen token reads data but cannot change
+  it. Guarded apply in v0.4 will need this answered again, properly.
 - **A compromised source server can influence the collector.** Binlog parsing
   happens in a third-party parser over bytes the server chooses, and the values
   it sends are stored and later rendered into SQL. The quoting above is what

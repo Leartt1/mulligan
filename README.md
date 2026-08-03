@@ -8,9 +8,10 @@ it at the database's change log, see a timeline of recent writes, preview the
 diff, and generate — or apply — the reverse SQL. No migration to a new database,
 no lock-in.
 
-> Status: **v0.2 — live tailing.** Follows a running MySQL or MariaDB and keeps a
-> rolling window of recent changes, so a revert can be generated without going
-> looking for binlog files. The web console is next; see [PLAN.md](PLAN.md).
+> Status: **v0.3a — read-only HTTP API.** Follows a running MySQL or MariaDB,
+> keeps a rolling window of recent changes, and serves it: timeline, diff, and a
+> downloadable revert script. Nothing is executed, and the listener is loopback
+> unless you say otherwise. The web console goes on top; see [PLAN.md](PLAN.md).
 
 ## The idea
 
@@ -140,6 +141,85 @@ $ mulligan status -store shop.db -json
   "misses": []
 }
 ```
+
+### Serve it over HTTP
+
+`serve` exposes the same store to anything that speaks HTTP. It is read-only —
+it proposes reverts and never runs one — and it binds loopback by default:
+
+```console
+$ mulligan serve -store shop.db
+mulligan serving shop.db on http://127.0.0.1:8080
+no token required: this listener is loopback-only
+```
+
+| Route | Answers |
+|---|---|
+| `GET /api/status` | the health report, in the shape `mulligan status -json` prints |
+| `GET /api/changes` | a timeline page, newest first: `from`, `to`, `tables`, `limit`, `before` |
+| `GET /api/changes/{id}` | one change with its columns and both row images |
+| `GET /api/revert.sql` | the revert script, streamed as a download |
+
+```console
+$ curl -s 'http://127.0.0.1:8080/api/changes?limit=1'
+{
+  "changes": [
+    {
+      "id": 2,
+      "at": "2026-08-03T08:27:48Z",
+      "schema": "shop",
+      "table": "orders",
+      "op": "DELETE",
+      "log_file": "binlog.000003",
+      "log_pos": 1783,
+      "query": "",
+      "schema_change": false
+    }
+  ],
+  "next": 2
+}
+```
+
+Row values come back as **strings, never JSON numbers** — every browser parses a
+JSON number as a float64, and a `DECIMAL(10,2)` displayed almost-right in a diff
+someone is about to approve is the worst kind of wrong:
+
+```console
+$ curl -s http://127.0.0.1:8080/api/changes/1     # condensed here; the server indents one field per line
+{
+  "id": 1, "at": "2026-08-03T08:27:48Z",
+  "schema": "shop", "table": "orders", "op": "UPDATE",
+  "log_file": "binlog.000003", "log_pos": 1425, "query": "", "schema_change": false,
+  "columns": [
+    {"name": "id", "primary_key": true, "read_only": false},
+    {"name": "customer", "primary_key": false, "read_only": false},
+    {"name": "status", "primary_key": false, "read_only": false},
+    {"name": "total", "primary_key": false, "read_only": false},
+    {"name": "note", "primary_key": false, "read_only": false}
+  ],
+  "before": ["1", "ada", "pending", "19.99", null],
+  "after":  ["1", "ada", "shipped", "19.99", null]
+}
+```
+
+The refusals carry over intact. A window the store cannot answer for is a **409
+with the reason**, never a `200` holding an empty list — an empty array reads as
+"nothing happened" exactly the way an empty script does:
+
+```console
+$ curl -s -w '\nHTTP %{http_code}\n' 'http://127.0.0.1:8080/api/changes?from=2020-01-01T00:00:00Z'
+{
+  "error": "store: the window reaches back to 2020-01-01 00:00:00 UTC but the store only covers from 2026-08-03 08:27:43 UTC; changes before that were never recorded"
+}
+
+HTTP 409
+```
+
+**Binding beyond loopback requires a token.** The store is an unencrypted partial
+copy of your tables, so `-listen 0.0.0.0:8080` refuses to start unless
+`MULLIGAN_TOKEN` is set; with it set, every request must carry
+`Authorization: Bearer <token>`. An SSH tunnel to the default loopback listener
+is the simpler answer for one operator.
 
 ### Or read a binlog file directly
 

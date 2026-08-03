@@ -27,7 +27,9 @@ source.
   live, and the query the console needs — by time, table and user — is an index,
   which is the thing SQLite is. Pure-Go `modernc.org/sqlite`, so the single static
   binary survives.
-- Auth model for the console (v1 can be single-user / bind-to-localhost only).
+- ~~Auth model for the console.~~ **Resolved 2026-08-03: loopback-only, no
+  accounts; a bearer token is required to bind anywhere else.** See the v0.3
+  notes below.
 
 ---
 
@@ -102,8 +104,13 @@ database you *already run*. That's Mulligan.
   rolling window store, query by time and table. *(Not by user: the binlog does
   not carry one. What it can carry is the statement that caused the rows, which
   Mulligan captures when the server logs it — see §0.)*
-- **v0.3 — API + Web console.** Timeline UI, diff preview, generate revert,
-  download `.sql`.
+- **v0.3a — Read-only HTTP API. ✅ done.** `mulligan serve` exposes the store:
+  timeline with cursor paging, diff with both row images, and a streamed
+  `revert.sql`. Read-only, loopback by default, coverage refusals answered as
+  409. — met by `internal/acceptance`, where a script downloaded over HTTP
+  restores a real database exactly.
+- **v0.3b — Web console.** Timeline UI, diff preview, one-click generate, on top
+  of the API above. UI stack still undecided (§0).
 - **v0.4 — Guarded apply.** Execute a reversal with dry-run first + concurrent-write
   conflict warnings ("row changed again after the target statement").
 - **v0.5 — Postgres adapter.** WAL via logical decoding, same reverse engine.
@@ -205,8 +212,22 @@ worth remembering when weighing how much to invest in them:
 
 Toward **v0.3 (API + web console)**:
 
-1. Serve the store over HTTP: timeline, filter, diff preview, download `.sql`.
-2. Settle the auth question in §0 before anything binds to a port.
+1. ~~Serve the store over HTTP: timeline, filter, diff preview, download
+   `.sql`.~~ **Done**, spec in
+   `docs/superpowers/specs/2026-08-03-http-api-design.md`. Four routes, all GET,
+   nothing executed. Coverage refusals became 409s carrying the store's own
+   words, because a 200 with an empty array is the same lie as an empty script
+   in a friendlier wrapper. Row values are JSON strings, never numbers: browsers
+   parse those as float64 and a DECIMAL would preview almost-right.
+2. ~~Settle the auth question in §0 before anything binds to a port.~~
+   **Resolved 2026-08-03: loopback-only, no accounts.** The default listener is
+   `127.0.0.1:8080` and needs no token. Anything else refuses to start unless
+   `MULLIGAN_TOKEN` is set, and then every request carries it as a bearer token.
+   No identity, no rotation, no expiry — an audit trail could only say "someone
+   holding the token", which is recorded as a limit rather than dressed up. The
+   reasoning: the store is an unencrypted partial copy of the rows, so the file
+   permission is the real boundary and a listener beyond loopback is a decision
+   someone has to make on purpose.
 3. Decide the UI stack (§0), and embed it with `go:embed`.
 4. ~~`mulligan status`, so coverage health can be looked at deliberately rather
    than discovered mid-incident.~~ **Done.** It reports coverage, retention,
