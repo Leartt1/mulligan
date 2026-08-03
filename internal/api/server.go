@@ -34,6 +34,7 @@ func New(db *store.Store, label string, now func() time.Time) *Server {
 	s.mux.HandleFunc("GET /api/status", s.handleStatus)
 	s.mux.HandleFunc("GET /api/changes", s.handleChanges)
 	s.mux.HandleFunc("GET /api/changes/{id}", s.handleChangeDetail)
+	s.mux.HandleFunc("GET /api/revert.sql", s.handleRevert)
 
 	// Anything unrouted answers in the same shape as everything else, rather than
 	// in net/http's plain text — a client parsing JSON should not have to handle
