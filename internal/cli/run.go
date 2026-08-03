@@ -40,6 +40,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return watch(args[1:], stdout, stderr)
 	case "status":
 		return status(args[1:], stdout, stderr)
+	case "serve":
+		return serve(args[1:], stdout, stderr)
 	case "version", "-version", "--version":
 		fmt.Fprintf(stdout, "mulligan %s\n", Version)
 		return exitOK
@@ -60,6 +62,7 @@ Usage:
   mulligan watch [flags]              follow a live server into a window store
   mulligan generate [flags] FILE...   generate SQL that undoes logged changes
   mulligan status [flags]             report what a window store can answer for
+  mulligan serve [flags]              serve a window store over HTTP, read-only
   mulligan version                    print the version
   mulligan help                       print this message
 
@@ -97,6 +100,15 @@ Generate flags:
 Status flags:
   -store FILE     window store to report on (required)
   -json           write the report as one JSON object instead of text
+
+Serve flags:
+  -store FILE     window store to serve (required)
+  -listen ADDR    address to listen on (default 127.0.0.1:8080)
+
+Serve is read-only: it proposes reverts and never runs one. The default listener
+is loopback, because the store holds full row images and is an unencrypted
+partial copy of your tables. Binding anywhere else requires MULLIGAN_TOKEN to be
+set, and every request must then carry it as "Authorization: Bearer <token>".
 
 Status exits 0 when the store is sound and its collector is keeping up, and 1
 when something needs looking at — a damaged file, a store holding nothing, or a
