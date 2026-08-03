@@ -17,6 +17,7 @@ import (
 	"github.com/learttytyri/mulligan/internal/change"
 	"github.com/learttytyri/mulligan/internal/cli"
 	"github.com/learttytyri/mulligan/internal/reverse"
+	"github.com/learttytyri/mulligan/internal/script"
 	sourcemysql "github.com/learttytyri/mulligan/internal/source/mysql"
 	"github.com/learttytyri/mulligan/internal/store"
 )
@@ -163,12 +164,12 @@ func TestWatchCapturesChangesThatCanBeReverted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generating the reversal: %v", err)
 	}
-	var script strings.Builder
-	if err := cli.Render(&script, "mulligan.db", change.Filter{}, nil, plan); err != nil {
+	var rendered strings.Builder
+	if err := script.Render(&rendered, "mulligan.db", change.Filter{}, nil, plan); err != nil {
 		t.Fatalf("rendering: %v", err)
 	}
-	t.Logf("generated script:\n%s", script.String())
-	s.applyScript(script.String())
+	t.Logf("generated script:\n%s", rendered.String())
+	s.applyScript(rendered.String())
 
 	if restored := s.query(snapshot); !reflect.DeepEqual(restored, before) {
 		t.Errorf("rows were not restored\n got: %q\nwant: %q", restored, before)
@@ -233,12 +234,12 @@ func TestWatchRestoresTemporalValuesFromANonUTCHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generating the reversal: %v", err)
 	}
-	var script strings.Builder
-	if err := cli.Render(&script, "mulligan.db", change.Filter{}, nil, plan); err != nil {
+	var rendered strings.Builder
+	if err := script.Render(&rendered, "mulligan.db", change.Filter{}, nil, plan); err != nil {
 		t.Fatalf("rendering: %v", err)
 	}
-	t.Logf("generated script:\n%s", script.String())
-	s.applyScript(script.String())
+	t.Logf("generated script:\n%s", rendered.String())
+	s.applyScript(rendered.String())
 
 	if restored := s.query(snap); !reflect.DeepEqual(restored, before) {
 		t.Errorf("temporal values were not restored from a non-UTC host\n got: %q\nwant: %q", restored, before)
@@ -325,12 +326,12 @@ func TestWatchAgainstMariaDBCapturesRevertableChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generating the reversal: %v", err)
 	}
-	var script strings.Builder
-	if err := cli.Render(&script, "mulligan.db", change.Filter{}, nil, plan); err != nil {
+	var rendered strings.Builder
+	if err := script.Render(&rendered, "mulligan.db", change.Filter{}, nil, plan); err != nil {
 		t.Fatalf("rendering: %v", err)
 	}
-	t.Logf("generated script:\n%s", script.String())
-	s.applyScript(script.String())
+	t.Logf("generated script:\n%s", rendered.String())
+	s.applyScript(rendered.String())
 
 	if restored := s.query(snapshot); !reflect.DeepEqual(restored, before) {
 		t.Errorf("rows were not restored\n got: %q\nwant: %q", restored, before)
@@ -435,20 +436,20 @@ func TestWatchMarksGeneratedColumnsWithoutBeingTold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generating the reversal: %v", err)
 	}
-	var script strings.Builder
-	if err := cli.Render(&script, "mulligan.db", change.Filter{}, nil, plan); err != nil {
+	var rendered strings.Builder
+	if err := script.Render(&rendered, "mulligan.db", change.Filter{}, nil, plan); err != nil {
 		t.Fatalf("rendering: %v", err)
 	}
-	t.Logf("generated script:\n%s", script.String())
+	t.Logf("generated script:\n%s", rendered.String())
 
 	for _, computed := range []string{"`tax`", "`gross`"} {
-		if strings.Contains(script.String(), "SET "+computed) || strings.Contains(script.String(), ", "+computed+" =") {
+		if strings.Contains(rendered.String(), "SET "+computed) || strings.Contains(rendered.String(), ", "+computed+" =") {
 			t.Errorf("the script assigns to the generated column %s, which is an error the server refuses:\n%s",
-				computed, script.String())
+				computed, rendered.String())
 		}
 	}
 
-	s.applyScript(script.String())
+	s.applyScript(rendered.String())
 
 	if restored := s.query(snap); !reflect.DeepEqual(restored, before) {
 		t.Errorf("rows were not restored\n got: %q\nwant: %q", restored, before)

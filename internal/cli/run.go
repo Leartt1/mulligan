@@ -13,6 +13,7 @@ import (
 	"github.com/learttytyri/mulligan/internal/binlog"
 	"github.com/learttytyri/mulligan/internal/change"
 	"github.com/learttytyri/mulligan/internal/reverse"
+	"github.com/learttytyri/mulligan/internal/script"
 	"github.com/learttytyri/mulligan/internal/store"
 )
 
@@ -193,21 +194,21 @@ func generate(args []string, stdout, stderr io.Writer) int {
 	// Render into memory first. A half-written script on disk is indistinguishable
 	// from a complete one, and the whole point is that a human trusts what they
 	// review.
-	var script bytes.Buffer
-	if err := Render(&script, sourceLabel(files), filter, schemaChanges, plan); err != nil {
+	var rendered bytes.Buffer
+	if err := script.Render(&rendered, sourceLabel(files), filter, schemaChanges, plan); err != nil {
 		fmt.Fprintf(stderr, "mulligan generate: %v\n", err)
 		return exitFailure
 	}
 
 	if *outPath == "" {
-		if _, err := stdout.Write(script.Bytes()); err != nil {
+		if _, err := stdout.Write(rendered.Bytes()); err != nil {
 			fmt.Fprintf(stderr, "mulligan generate: %v\n", err)
 			return exitFailure
 		}
 		return exitOK
 	}
 
-	if err := os.WriteFile(*outPath, script.Bytes(), 0o600); err != nil {
+	if err := os.WriteFile(*outPath, rendered.Bytes(), 0o600); err != nil {
 		fmt.Fprintf(stderr, "mulligan generate: %v\n", err)
 		return exitFailure
 	}
@@ -265,8 +266,8 @@ func generateFromStore(path string, filter change.Filter, generated []string, ou
 		return exitFailure
 	}
 
-	script := newScriptWriter(dest)
-	script.open(filepath.Base(path), filter, schemaChanges)
+	writer := script.NewWriter(dest)
+	writer.Open(filepath.Base(path), filter, schemaChanges)
 
 	err = db.EachEvent(filter, time.Now().UTC(), func(ev change.Event) error {
 		if ev.IsSchemaChange() {
@@ -280,14 +281,14 @@ func generateFromStore(path string, filter change.Filter, generated []string, ou
 		if err != nil {
 			return err
 		}
-		return script.write(reverse.Reversal{Event: one[0], Statement: stmt})
+		return writer.Write(reverse.Reversal{Event: one[0], Statement: stmt})
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "mulligan generate: %v\n", err)
 		return exitFailure
 	}
 
-	if err := script.close(); err != nil {
+	if err := writer.Close(); err != nil {
 		fmt.Fprintf(stderr, "mulligan generate: %v\n", err)
 		return exitFailure
 	}
@@ -422,4 +423,13 @@ func splitSchemaChanges(events []change.Event) (rows, schema []change.Event) {
 		rows = append(rows, ev)
 	}
 	return rows, schema
+}
+
+// plural renders a count with its noun, so a message says "1 statement" rather
+// than "1 statements".
+func plural(n int, noun string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, noun)
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }

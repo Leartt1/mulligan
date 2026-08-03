@@ -1,4 +1,4 @@
-package cli
+package script
 
 import (
 	"bufio"
@@ -9,7 +9,7 @@ import (
 	"github.com/learttytyri/mulligan/internal/reverse"
 )
 
-// scriptWriter emits a revert script as its statements arrive.
+// Writer emits a revert script as its statements arrive.
 //
 // Nothing accumulates. Render takes a finished plan and is right for a caller
 // that already has one; this exists for the case that cannot afford to build
@@ -19,18 +19,19 @@ import (
 // The header cannot be written until the statement count is known, so it is not
 // written at all: the count moves to the end, where it doubles as the marker
 // that says the script is complete.
-type scriptWriter struct {
+type Writer struct {
 	out    *bufio.Writer
 	n      int
 	opened bool
 }
 
-func newScriptWriter(w io.Writer) *scriptWriter {
-	return &scriptWriter{out: bufio.NewWriter(w)}
+// NewWriter streams a script to w.
+func NewWriter(w io.Writer) *Writer {
+	return &Writer{out: bufio.NewWriter(w)}
 }
 
-// open writes everything that precedes the first statement.
-func (s *scriptWriter) open(source string, window change.Filter, schemaChanges []change.Event) {
+// Open writes everything that precedes the first statement.
+func (s *Writer) Open(source string, window change.Filter, schemaChanges []change.Event) {
 	if s.opened {
 		return
 	}
@@ -51,19 +52,19 @@ func (s *scriptWriter) open(source string, window change.Filter, schemaChanges [
 	fmt.Fprintln(s.out, "SET NAMES utf8mb4;")
 }
 
-// write emits one reversal.
-func (s *scriptWriter) write(r reverse.Reversal) error {
+// Write emits one reversal.
+func (s *Writer) Write(r reverse.Reversal) error {
 	writeReversal(s.out, r)
 	s.n++
 	return s.out.Flush()
 }
 
-// close writes the trailer.
+// Close writes the trailer.
 //
 // The count lands here rather than in the header because a streamed script does
 // not know it in advance — and putting it at the end is better anyway: a script
 // cut short by a crash or a full disk has no trailer, so a reader can tell.
-func (s *scriptWriter) close() error {
+func (s *Writer) Close() error {
 	if s.n == 0 {
 		fmt.Fprintln(s.out, "-- no matching changes found")
 		return s.out.Flush()

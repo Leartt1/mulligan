@@ -1,5 +1,12 @@
-// Package cli implements the mulligan command line.
-package cli
+// Package script renders a revert script: the artifact a human reads before
+// deciding whether to run it.
+//
+// It is separate from the command that first produced one because two things
+// now emit scripts — the CLI and the HTTP API — and a second renderer would
+// mean two sets of rules for quoting a comment, warning about a schema change,
+// and marking a script complete. A reviewer trusting one of them would be
+// trusting the wrong one.
+package script
 
 import (
 	"bufio"

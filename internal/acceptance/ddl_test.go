@@ -6,8 +6,8 @@ import (
 
 	"github.com/learttytyri/mulligan/internal/binlog"
 	"github.com/learttytyri/mulligan/internal/change"
-	"github.com/learttytyri/mulligan/internal/cli"
 	"github.com/learttytyri/mulligan/internal/reverse"
+	"github.com/learttytyri/mulligan/internal/script"
 )
 
 // A revert is built from the table as it was when the change happened. If the
@@ -65,14 +65,14 @@ func TestRevertingAcrossASchemaChange(t *testing.T) {
 			return false, "generation refused: " + err.Error()
 		}
 
-		var script strings.Builder
-		if err := cli.Render(&script, logName, change.Filter{}, schemaChanges, plan); err != nil {
+		var rendered strings.Builder
+		if err := script.Render(&rendered, logName, change.Filter{}, schemaChanges, plan); err != nil {
 			t.Fatalf("rendering: %v", err)
 		}
-		warned = strings.Contains(script.String(), "WARNING")
+		warned = strings.Contains(rendered.String(), "WARNING")
 		t.Logf("script warned about a schema change: %v", warned)
 
-		out, err := s.runScript(script.String())
+		out, err := s.runScript(rendered.String())
 		if err != nil {
 			return false, strings.TrimSpace(out)
 		}

@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/learttytyri/mulligan/internal/change"
-	"github.com/learttytyri/mulligan/internal/cli"
 	"github.com/learttytyri/mulligan/internal/reverse"
+	"github.com/learttytyri/mulligan/internal/script"
 )
 
 const (
@@ -206,13 +206,13 @@ func (s *mysqlServer) revert(t *testing.T, events []change.Event, source string)
 		t.Fatalf("generating the reversal: %v", err)
 	}
 
-	var script strings.Builder
-	if err := cli.Render(&script, source, change.Filter{}, nil, plan); err != nil {
+	var rendered strings.Builder
+	if err := script.Render(&rendered, source, change.Filter{}, nil, plan); err != nil {
 		t.Fatalf("rendering the script: %v", err)
 	}
-	t.Logf("generated script:\n%s", script.String())
+	t.Logf("generated script:\n%s", rendered.String())
 
-	s.applyScript(script.String())
+	s.applyScript(rendered.String())
 	return plan
 }
 
