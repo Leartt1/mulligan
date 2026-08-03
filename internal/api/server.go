@@ -33,6 +33,7 @@ func New(db *store.Store, label string, now func() time.Time) *Server {
 	// and "the tool proposes, a human runs it" is the whole safety model.
 	s.mux.HandleFunc("GET /api/status", s.handleStatus)
 	s.mux.HandleFunc("GET /api/changes", s.handleChanges)
+	s.mux.HandleFunc("GET /api/changes/{id}", s.handleChangeDetail)
 
 	// Anything unrouted answers in the same shape as everything else, rather than
 	// in net/http's plain text — a client parsing JSON should not have to handle
