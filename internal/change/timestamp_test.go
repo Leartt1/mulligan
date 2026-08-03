@@ -1,4 +1,4 @@
-package cli
+package change
 
 import (
 	"testing"
@@ -25,12 +25,12 @@ func TestParseTimestampAcceptsTheFormsOperatorsType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.in, func(t *testing.T) {
-			got, err := parseTimestamp(tt.in)
+			got, err := ParseTime(tt.in)
 			if err != nil {
-				t.Fatalf("parseTimestamp(%q) returned error: %v", tt.in, err)
+				t.Fatalf("ParseTime(%q) returned error: %v", tt.in, err)
 			}
 			if !got.Equal(tt.want) {
-				t.Errorf("parseTimestamp(%q) = %s, want %s", tt.in, got, tt.want)
+				t.Errorf("ParseTime(%q) = %s, want %s", tt.in, got, tt.want)
 			}
 		})
 	}
@@ -40,9 +40,9 @@ func TestParseTimestampAcceptsTheFormsOperatorsType(t *testing.T) {
 // UTC would silently shift the window by the machine's offset and quietly miss
 // the very statement they are hunting for.
 func TestParseTimestampReadsZonelessInputAsLocalTime(t *testing.T) {
-	got, err := parseTimestamp("2026-07-27 12:03:11")
+	got, err := ParseTime("2026-07-27 12:03:11")
 	if err != nil {
-		t.Fatalf("parseTimestamp returned error: %v", err)
+		t.Fatalf("ParseTime returned error: %v", err)
 	}
 
 	_, offset := got.Zone()
@@ -55,8 +55,8 @@ func TestParseTimestampReadsZonelessInputAsLocalTime(t *testing.T) {
 func TestParseTimestampRejectsGarbage(t *testing.T) {
 	for _, in := range []string{"", "yesterday", "27/07/2026", "2026-13-01"} {
 		t.Run(in, func(t *testing.T) {
-			if got, err := parseTimestamp(in); err == nil {
-				t.Errorf("parseTimestamp(%q) = %s, want error", in, got)
+			if got, err := ParseTime(in); err == nil {
+				t.Errorf("ParseTime(%q) = %s, want error", in, got)
 			}
 		})
 	}
@@ -81,12 +81,12 @@ func TestParseTimestampAcceptsABareTimeOfDay(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.in, func(t *testing.T) {
-			got, err := parseTimestampAt(tt.in, now)
+			got, err := ParseTimeAt(tt.in, now)
 			if err != nil {
-				t.Fatalf("parseTimestampAt(%q) returned error: %v", tt.in, err)
+				t.Fatalf("ParseTimeAt(%q) returned error: %v", tt.in, err)
 			}
 			if !got.Equal(tt.want) {
-				t.Errorf("parseTimestampAt(%q) = %s, want %s", tt.in, got, tt.want)
+				t.Errorf("ParseTimeAt(%q) = %s, want %s", tt.in, got, tt.want)
 			}
 		})
 	}
@@ -99,14 +99,14 @@ func TestParseTimestampAcceptsABareTimeOfDay(t *testing.T) {
 func TestABareTimeStillToComeTodayMeansYesterday(t *testing.T) {
 	now := time.Date(2026, 7, 30, 0, 10, 0, 0, time.Local)
 
-	got, err := parseTimestampAt("23:50", now)
+	got, err := ParseTimeAt("23:50", now)
 	if err != nil {
-		t.Fatalf("parseTimestampAt returned error: %v", err)
+		t.Fatalf("ParseTimeAt returned error: %v", err)
 	}
 
 	want := time.Date(2026, 7, 29, 23, 50, 0, 0, time.Local)
 	if !got.Equal(want) {
-		t.Errorf("parseTimestampAt(%q) = %s, want the most recent occurrence %s", "23:50", got, want)
+		t.Errorf("ParseTimeAt(%q) = %s, want the most recent occurrence %s", "23:50", got, want)
 	}
 }
 
@@ -115,9 +115,9 @@ func TestABareTimeStillToComeTodayMeansYesterday(t *testing.T) {
 func TestAFullTimestampIsNeverShiftedByADay(t *testing.T) {
 	now := time.Date(2026, 7, 30, 0, 10, 0, 0, time.Local)
 
-	got, err := parseTimestampAt("2026-07-30 23:50:00", now)
+	got, err := ParseTimeAt("2026-07-30 23:50:00", now)
 	if err != nil {
-		t.Fatalf("parseTimestampAt returned error: %v", err)
+		t.Fatalf("ParseTimeAt returned error: %v", err)
 	}
 
 	want := time.Date(2026, 7, 30, 23, 50, 0, 0, time.Local)
@@ -133,8 +133,8 @@ func TestParseTimestampStillRejectsThingsThatAreNotTimes(t *testing.T) {
 
 	for _, in := range []string{"25:00", "13:60", "13", ":05", "13:", "noon", "1305"} {
 		t.Run(in, func(t *testing.T) {
-			if got, err := parseTimestampAt(in, now); err == nil {
-				t.Errorf("parseTimestampAt(%q) = %s, want error", in, got)
+			if got, err := ParseTimeAt(in, now); err == nil {
+				t.Errorf("ParseTimeAt(%q) = %s, want error", in, got)
 			}
 		})
 	}

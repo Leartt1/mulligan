@@ -1,4 +1,4 @@
-package cli
+package change
 
 import (
 	"fmt"
@@ -31,12 +31,12 @@ var timeOnlyLayouts = []string{
 	"15:04",
 }
 
-// parseTimestamp reads a timestamp in one of the forms an operator types.
-func parseTimestamp(s string) (time.Time, error) {
-	return parseTimestampAt(s, time.Now())
+// ParseTime reads a timestamp in one of the forms an operator types.
+func ParseTime(s string) (time.Time, error) {
+	return ParseTimeAt(s, time.Now())
 }
 
-// parseTimestampAt resolves s against a given moment, so the meaning of a
+// ParseTimeAt resolves s against a given moment, so the meaning of a
 // date-less time is testable.
 //
 // A bare time resolves to its most recent occurrence: today if it has already
@@ -45,7 +45,7 @@ func parseTimestamp(s string) (time.Time, error) {
 // almost a day away, which the store would refuse as a window it has not
 // reached. A timestamp carrying a date is never second-guessed, however far
 // ahead it sits.
-func parseTimestampAt(s string, now time.Time) (time.Time, error) {
+func ParseTimeAt(s string, now time.Time) (time.Time, error) {
 	for _, layout := range zonedLayouts {
 		if t, err := time.Parse(layout, s); err == nil {
 			return t, nil

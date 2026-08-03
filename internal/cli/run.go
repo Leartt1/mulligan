@@ -322,12 +322,12 @@ func buildFilter(tables, from, to string) (change.Filter, error) {
 
 	var err error
 	if from != "" {
-		if f.From, err = parseTimestamp(from); err != nil {
+		if f.From, err = change.ParseTime(from); err != nil {
 			return f, fmt.Errorf("-from: %w", err)
 		}
 	}
 	if to != "" {
-		if f.To, err = parseTimestamp(to); err != nil {
+		if f.To, err = change.ParseTime(to); err != nil {
 			return f, fmt.Errorf("-to: %w", err)
 		}
 	}
